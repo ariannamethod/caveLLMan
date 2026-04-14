@@ -71,17 +71,16 @@ WebGPU detected? GPU-accelerated. Not available? Silent fallback to CPU.
 - `index.html` — Hebrew RTL (root language)
 - `en/index.html` — English
 
-## Python (educational/reference)
+## Generated Stories (samples)
 
-```bash
-python emolm.py                              # train + interactive mode
-python emolm.py --preset tiny                # ~16K params
-python emolm.py --preset standard            # ~200K params
-python emolm.py --optimizer chuck            # Chuck optimizer
-python emolm.py --prompt "🌅 ☕ 🏃"          # single prompt
+```
+☀️ 🐕 🗻 😊 ☕ 💕           sun, dog, mountain, joy, coffee, love
+🌧️ 🏠 😢 🎵 💪 🌅           rain, home, grief, music, strength, dawn
+💡 🎁 👏 😊 💕 🙏           idea, gift, applause, joy, love, prayer
+🌅 🚗 🗻 🌊 🎵 😊 💕 😴     dawn, drive, mountain, sea, music, joy, love, sleep
 ```
 
-Zero dependencies — pure Python standard library. Educational reference implementation.
+Each story is a narrative arc. The model learns the grammar of human experience.
 
 ## The 32 Hieroglyphs
 
