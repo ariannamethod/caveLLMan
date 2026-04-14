@@ -74,26 +74,76 @@ WebGPU detected? GPU-accelerated. Not available? Silent fallback to CPU.
 ## Generated Stories (samples)
 
 ```
-☀️ 🐕 🗻 😊 ☕ 💕           sun, dog, mountain, joy, coffee, love
-🌧️ 🏠 😢 🎵 💪 🌅           rain, home, grief, music, strength, dawn
-💡 🎁 👏 😊 💕 🙏           idea, gift, applause, joy, love, prayer
-🌅 🚗 🗻 🌊 🎵 😊 💕 😴     dawn, drive, mountain, sea, music, joy, love, sleep
+light water food strength joy
+dark fire fear group and strength
+love death grief many dark prayer
+person seek person love joy home
+mountain path seek strength light
+pain water sleep food strength joy
 ```
 
-Each story is a narrative arc. The model learns the grammar of human experience.
+Each story is a narrative arc in 32 hieroglyphs. The model learns the grammar of human experience.
 
 ## The 32 Hieroglyphs
 
-```
-ELEMENTS    light    dark     water    fire
-EARTH       tree     mountain home     path
-BODY        strength pain     sleep    food
-EMOTION     joy      grief    love     fear     anger
-PEOPLE      person   child    group
-MIND        idea     knowledge sound   prayer
-ACTION      create   destroy  seek     death
-GRAMMAR     not      many     when     and
-```
+<table>
+<tr><th colspan="4">ELEMENTS</th></tr>
+<tr>
+<td align="center"><img src="glyphs/light.svg" width="48"><br><sub>light</sub></td>
+<td align="center"><img src="glyphs/dark.svg" width="48"><br><sub>dark</sub></td>
+<td align="center"><img src="glyphs/water.svg" width="48"><br><sub>water</sub></td>
+<td align="center"><img src="glyphs/fire.svg" width="48"><br><sub>fire</sub></td>
+</tr>
+<tr><th colspan="4">EARTH</th></tr>
+<tr>
+<td align="center"><img src="glyphs/tree.svg" width="48"><br><sub>tree</sub></td>
+<td align="center"><img src="glyphs/mountain.svg" width="48"><br><sub>mountain</sub></td>
+<td align="center"><img src="glyphs/home.svg" width="48"><br><sub>home</sub></td>
+<td align="center"><img src="glyphs/path.svg" width="48"><br><sub>path</sub></td>
+</tr>
+<tr><th colspan="4">BODY</th></tr>
+<tr>
+<td align="center"><img src="glyphs/strength.svg" width="48"><br><sub>strength</sub></td>
+<td align="center"><img src="glyphs/pain.svg" width="48"><br><sub>pain</sub></td>
+<td align="center"><img src="glyphs/sleep.svg" width="48"><br><sub>sleep</sub></td>
+<td align="center"><img src="glyphs/food.svg" width="48"><br><sub>food</sub></td>
+</tr>
+<tr><th colspan="5">EMOTION</th></tr>
+<tr>
+<td align="center"><img src="glyphs/joy.svg" width="48"><br><sub>joy</sub></td>
+<td align="center"><img src="glyphs/grief.svg" width="48"><br><sub>grief</sub></td>
+<td align="center"><img src="glyphs/love.svg" width="48"><br><sub>love</sub></td>
+<td align="center"><img src="glyphs/fear.svg" width="48"><br><sub>fear</sub></td>
+<td align="center"><img src="glyphs/anger.svg" width="48"><br><sub>anger</sub></td>
+</tr>
+<tr><th colspan="3">PEOPLE</th></tr>
+<tr>
+<td align="center"><img src="glyphs/person.svg" width="48"><br><sub>person</sub></td>
+<td align="center"><img src="glyphs/child.svg" width="48"><br><sub>child</sub></td>
+<td align="center"><img src="glyphs/group.svg" width="48"><br><sub>group</sub></td>
+</tr>
+<tr><th colspan="4">MIND</th></tr>
+<tr>
+<td align="center"><img src="glyphs/idea.svg" width="48"><br><sub>idea</sub></td>
+<td align="center"><img src="glyphs/knowledge.svg" width="48"><br><sub>knowledge</sub></td>
+<td align="center"><img src="glyphs/sound.svg" width="48"><br><sub>sound</sub></td>
+<td align="center"><img src="glyphs/prayer.svg" width="48"><br><sub>prayer</sub></td>
+</tr>
+<tr><th colspan="4">ACTION</th></tr>
+<tr>
+<td align="center"><img src="glyphs/create.svg" width="48"><br><sub>create</sub></td>
+<td align="center"><img src="glyphs/destroy.svg" width="48"><br><sub>destroy</sub></td>
+<td align="center"><img src="glyphs/seek.svg" width="48"><br><sub>seek</sub></td>
+<td align="center"><img src="glyphs/death.svg" width="48"><br><sub>death</sub></td>
+</tr>
+<tr><th colspan="4">GRAMMAR</th></tr>
+<tr>
+<td align="center"><img src="glyphs/not.svg" width="48"><br><sub>not</sub></td>
+<td align="center"><img src="glyphs/many.svg" width="48"><br><sub>many</sub></td>
+<td align="center"><img src="glyphs/when.svg" width="48"><br><sub>when</sub></td>
+<td align="center"><img src="glyphs/and.svg" width="48"><br><sub>and</sub></td>
+</tr>
+</table>
 
 32 symbols. Each one abstract — a semantic atom, not a picture. Combinations create meaning:
 
@@ -105,8 +155,6 @@ path  + seek   = pilgrimage
 create + knowledge = discovery
 person + not   = loneliness
 ```
-
-Custom SVG glyphs in `glyphs/` — cave-painting aesthetic, minimal strokes, works at any size.
 
 ## Architecture
 
