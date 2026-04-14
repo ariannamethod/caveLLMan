@@ -39,24 +39,24 @@ all: train_emolm infer_emolm
 train: train_emolm
 	@echo "Ready: ./train_emolm"
 
-train_emolm: train_emolm.c notorch.c notorch.h
-	$(CC) $(CFLAGS) $(BLAS_FLAGS) -o train_emolm train_emolm.c notorch.c -lm
+train_emolm: ariannamethod/train_emolm.c ariannamethod/notorch.c ariannamethod/notorch.h
+	$(CC) $(CFLAGS) $(BLAS_FLAGS) -Iariannamethod -o train_emolm ariannamethod/train_emolm.c ariannamethod/notorch.c -lm
 	@echo "Compiled: train_emolm (CPU + $(BLAS_NAME))"
 
 # Diffusion training binary
 diffusion: train_diffusion
 	@echo "Ready: ./train_diffusion"
 
-train_diffusion: train_diffusion.c notorch.c notorch.h
-	$(CC) $(CFLAGS) $(BLAS_FLAGS) -o train_diffusion train_diffusion.c notorch.c -lm
+train_diffusion: ariannamethod/train_diffusion.c ariannamethod/notorch.c ariannamethod/notorch.h
+	$(CC) $(CFLAGS) $(BLAS_FLAGS) -Iariannamethod -o train_diffusion ariannamethod/train_diffusion.c ariannamethod/notorch.c -lm
 	@echo "Compiled: train_diffusion (CPU + $(BLAS_NAME))"
 
 # Inference binary with BLAS
 infer: infer_emolm
 	@echo "Ready: ./infer_emolm"
 
-infer_emolm: infer_emolm.c notorch.c notorch.h
-	$(CC) $(CFLAGS) $(BLAS_FLAGS) -o infer_emolm infer_emolm.c notorch.c -lm
+infer_emolm: infer_emolm.c ariannamethod/notorch.c ariannamethod/notorch.h
+	$(CC) $(CFLAGS) $(BLAS_FLAGS) -Iariannamethod -o infer_emolm infer_emolm.c ariannamethod/notorch.c -lm
 	@echo "Compiled: infer_emolm (CPU + $(BLAS_NAME))"
 
 # CPU without BLAS (portable fallback) — builds both binaries

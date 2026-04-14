@@ -154,22 +154,44 @@ No Python. No pip. No torch. Pure C, built on [notorch](https://github.com/arian
 
 ---
 
+## How to read caveLLMan
+
+Each story is a sequence of glyphs. You read them like a sentence:
+
+```
+me BE fear dark not see path
+↓   ↓   ↓    ↓    ↓   ↓   ↓
+I  am  afraid dark can't see the way
+```
+
+```
+woman give child food and love
+↓      ↓    ↓     ↓    ↓   ↓
+a woman gives a child food and love
+```
+
+```
+old man remember before and BE grief
+↓   ↓      ↓       ↓     ↓  ↓   ↓
+an old man remembers the past and grieves
+```
+
 ## BE — The Super-Verb
 
-One circle. The most powerful symbol in the alphabet. Turns any noun into a verb, any object into a state:
+One circle. The most powerful symbol in the alphabet. **BE** turns any noun into a verb, any concept into a lived state:
 
-```
-BE + fear    = to be afraid
-BE + love    = to love
-BE + fire    = to burn
-BE + free    = to be free
-BE + death   = to die
-BE + change  = to become
-BE + pain    = to suffer
-BE + AI      = to be artificial
-```
+| caveLLMan | meaning |
+|-----------|---------|
+| me **BE** fear | I am afraid |
+| woman **BE** love man | a woman loves a man |
+| child **BE** joy | the child is happy |
+| spirit **BE** light | the spirit is luminous |
+| AI **BE** know much | the AI knows a lot |
+| me **BE** free | I am free |
+| person **BE** death | a person dies |
+| fire **BE** change | fire transforms |
 
-A cave painter 30,000 years ago would draw a circle around a figure to mean "this is happening." We kept the tradition.
+Without BE, these are nouns: fear, love, joy. With BE, they become experience. A cave painter 30,000 years ago would draw a circle around a figure to mean "this is happening." We kept the tradition.
 
 ---
 
