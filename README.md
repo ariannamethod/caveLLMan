@@ -1,12 +1,18 @@
-# emoLM 🧠✨
+# caveLLMan
 
-### A GPT that speaks emoji — 32 symbols, trains in seconds, runs everywhere.
+### 32 hieroglyphs. universal language. 30,000 years in the making.
 
 No Python. No pip. No torch. Pure C.
 
-## What is this?
+---
 
-emoLM is a GPT that learns the grammar of human experience through 32 emoji. Each emoji is a semantic atom — 🌅 is dawn, 😢 is grief, 💪 is strength, 🏥 is hospital. The model learns which atoms follow which, mapping the rhythm of everyday life into sequences it can predict and you can feel.
+## The 32 Signs
+
+In 2016, paleoanthropologist Genevieve von Petzinger published research documenting exactly **32 recurring geometric signs** found across 146 European cave sites spanning 30,000 years. Lines, chevrons, circles, spirals, zigzags, hands — the same symbols appearing from France to Indonesia to Australia. Not random. Not decoration. A shared cognitive vocabulary predating all known writing systems by 25,000 years.
+
+caveLLMan is a GPT that speaks this language. 32 abstract hieroglyphs — semantic atoms that encode all of human experience. Not emoji. Not words. Signs. The kind a cave painter would recognize.
+
+The model learns which atoms follow which. Light follows dark. Grief follows love. Creation follows destruction. The grammar of being alive, compressed into 32 symbols and a tiny transformer.
 
 ## Quick Start — C Engine (production)
 
@@ -77,20 +83,31 @@ python emolm.py --prompt "🌅 ☕ 🏃"          # single prompt
 
 Zero dependencies — pure Python standard library. Educational reference implementation.
 
-## The 32 Emoji Alphabet
+## The 32 Hieroglyphs
 
 ```
-🌅 dawn    🌙 night   ☀️ sun     ⭐ stars
-🌧️ rain    🔥 fire    🌊 sea     🌳 nature
-😊 joy     😢 grief   😴 sleep   💪 strength
-💕 love    🙏 prayer  💡 idea    👏 applause
-☕ drink   🍲 food    🏃 run     📖 read
-🎵 music   📸 photo   🚗 drive   🎁 gift
-🏠 home    🏥 hospital 🏢 work   🗻 mountain
-🐕 dog     👶 baby    👨‍🍳 cook   💊 medicine
+ELEMENTS    light    dark     water    fire
+EARTH       tree     mountain home     path
+BODY        strength pain     sleep    food
+EMOTION     joy      grief    love     fear     anger
+PEOPLE      person   child    group
+MIND        idea     knowledge sound   prayer
+ACTION      create   destroy  seek     death
+GRAMMAR     not      many     when     and
 ```
 
-32 symbols. Each one distinct — like chess pieces. No duplicates, no ambiguity.
+32 symbols. Each one abstract — a semantic atom, not a picture. Combinations create meaning:
+
+```
+light + water  = morning by the sea
+grief + child  = loss of innocence
+fire  + anger  = rage
+path  + seek   = pilgrimage
+create + knowledge = discovery
+person + not   = loneliness
+```
+
+Custom SVG glyphs in `glyphs/` — cave-painting aesthetic, minimal strokes, works at any size.
 
 ## Architecture
 

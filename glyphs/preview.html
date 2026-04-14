@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html><head><style>
+body { background: #1a1a2e; color: #e0e0e0; font-family: monospace; padding: 20px; }
+h1 { color: #fff; text-align: center; }
+.grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 16px; max-width: 900px; margin: 0 auto; }
+.glyph { text-align: center; padding: 12px; background: #16213e; border-radius: 8px; }
+.glyph svg { width: 48px; height: 48px; color: #e8d5b7; }
+.glyph .name { font-size: 11px; margin-top: 6px; color: #8899aa; }
+.glyph .id { font-size: 9px; color: #556677; }
+.cat { grid-column: 1 / -1; font-size: 13px; color: #c0a070; margin-top: 12px; border-bottom: 1px solid #333; padding-bottom: 4px; }
+</style></head><body>
+<h1>CaveLLMan — 32 Hieroglyphs</h1>
+<div class="grid">
+<div class="cat">ELEMENTS</div>
+<script>
+const glyphs = [
+  ["light","dark","water","fire"],
+  ["tree","mountain","home","path"],
+  ["BODY"],
+  ["strength","pain","sleep","food"],
+  ["EMOTION"],
+  ["joy","grief","love","fear","anger"],
+  ["PEOPLE"],
+  ["person","child","group"],
+  ["MIND"],
+  ["idea","knowledge","sound","prayer"],
+  ["ACTION"],
+  ["create","destroy","seek","death"],
+  ["GRAMMAR"],
+  ["not","many","when","and"]
+];
+const cats = {BODY:1,EMOTION:1,PEOPLE:1,MIND:1,ACTION:1,GRAMMAR:1,ELEMENTS:1};
+let id=0;
+glyphs.flat().forEach(g => {
+  if(cats[g]) { document.write(`<div class="cat">${g}</div>`); return; }
+  id++;
+  document.write(`<div class="glyph"><object data="${g}.svg" type="image/svg+xml" width="48" height="48"></object><div class="name">${g}</div><div class="id">#${id}</div></div>`);
+});
+</script>
+</div>
+</body></html>
