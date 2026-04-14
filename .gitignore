@@ -9,3 +9,4 @@ infer_emolm
 *.bin
 train_emolm
 infer_emolm
+train_diffusion

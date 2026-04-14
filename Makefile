@@ -43,6 +43,14 @@ train_emolm: train_emolm.c notorch.c notorch.h
 	$(CC) $(CFLAGS) $(BLAS_FLAGS) -o train_emolm train_emolm.c notorch.c -lm
 	@echo "Compiled: train_emolm (CPU + $(BLAS_NAME))"
 
+# Diffusion training binary
+diffusion: train_diffusion
+	@echo "Ready: ./train_diffusion"
+
+train_diffusion: train_diffusion.c notorch.c notorch.h
+	$(CC) $(CFLAGS) $(BLAS_FLAGS) -o train_diffusion train_diffusion.c notorch.c -lm
+	@echo "Compiled: train_diffusion (CPU + $(BLAS_NAME))"
+
 # Inference binary with BLAS
 infer: infer_emolm
 	@echo "Ready: ./infer_emolm"
