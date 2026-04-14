@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>caveLLMan — 88 Hieroglyphs</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Courier New', monospace; background: #faf8f5; color: #222; }
+
+header { text-align: center; padding: 40px 20px 20px; }
+header h1 { font-size: 2.4em; letter-spacing: 2px; }
+header p { color: #666; margin-top: 8px; font-size: 0.95em; max-width: 640px; margin-left: auto; margin-right: auto; }
+
+.article { max-width: 720px; margin: 0 auto; padding: 20px; line-height: 1.7; font-size: 0.95em; color: #444; }
+.article h2 { color: #000; margin-top: 30px; margin-bottom: 10px; font-size: 1.3em; border-bottom: 2px solid #000; padding-bottom: 4px; }
+.article p { margin-bottom: 12px; }
+.article .highlight { background: #f0ece4; padding: 12px 16px; border-left: 3px solid #000; margin: 16px 0; font-size: 0.9em; }
+
+.alphabet { max-width: 960px; margin: 30px auto; padding: 0 20px; }
+.cat-title { font-weight: bold; font-size: 0.85em; color: #000; border-bottom: 2px solid #000; padding-bottom: 3px; margin-top: 20px; margin-bottom: 10px; }
+.glyph-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.glyph { width: 72px; text-align: center; padding: 8px 4px; cursor: pointer; border-radius: 6px; transition: background 0.15s; }
+.glyph:hover { background: #e8e4dc; }
+.glyph.selected { background: #d4cfc4; }
+.glyph img { width: 36px; height: 36px; }
+.glyph .name { font-size: 9px; color: #555; margin-top: 3px; }
+
+.composer { max-width: 720px; margin: 30px auto; padding: 20px; }
+.composer h2 { font-size: 1.1em; margin-bottom: 12px; }
+.story-display { min-height: 60px; padding: 16px; background: #fff; border: 2px solid #000; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.story-display .token { display: flex; flex-direction: column; align-items: center; }
+.story-display .token img { width: 32px; height: 32px; }
+.story-display .token .label { font-size: 8px; color: #888; }
+.story-display .cursor { width: 2px; height: 40px; background: #000; animation: blink 1s infinite; }
+@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+.controls { margin-top: 12px; display: flex; gap: 8px; }
+.controls button { padding: 8px 16px; font-family: inherit; font-size: 0.85em; border: 2px solid #000; background: #fff; cursor: pointer; border-radius: 4px; }
+.controls button:hover { background: #000; color: #fff; }
+
+.examples { max-width: 720px; margin: 20px auto; padding: 20px; }
+.example { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 12px 16px; margin-bottom: 10px; }
+.example .glyphs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+.example .glyphs img { width: 24px; height: 24px; }
+.example .text { font-size: 0.85em; color: #666; }
+
+footer { text-align: center; padding: 40px 20px; color: #999; font-size: 0.8em; }
+footer a { color: #666; }
+</style>
+</head>
+<body>
+
+<header>
+<h1>caveLLMan</h1>
+<p>88 hieroglyphs. one super-verb. the grammar of being alive.</p>
+</header>
+
+<div class="article">
+<h2>The 32 Signs</h2>
+<p>In 2016, paleoanthropologist Genevieve von Petzinger documented exactly 32 recurring geometric signs across 146 European cave sites spanning 30,000 years. Lines, chevrons, circles, spirals, zigzags, hands — the same symbols appearing from France to Indonesia to Australia. Not random. Not decoration. A shared cognitive vocabulary predating all known writing by 25,000 years.</p>
+
+<p>caveLLMan extends this vocabulary to 88 symbols — adding what a cave painter of the 21st century needs: internet, AI, money, stress, freedom. Plus a super-verb the ancients already knew: <strong>BE</strong>.</p>
+
+<div class="highlight">
+<strong>BE</strong> turns any noun into a verb.<br>
+BE + fear = to be afraid. BE + love = to love. BE + fire = to burn.<br>
+One circle that doubles the expressiveness of the entire language.
+</div>
+
+<h2>How to read</h2>
+<p>Each story is a sequence of glyphs read left to right:</p>
+<div class="highlight">
+<strong>me BE fear dark not see path</strong><br>
+→ I am afraid of the dark, I cannot see the way<br><br>
+<strong>woman give child food and love</strong><br>
+→ a woman gives a child food and love<br><br>
+<strong>never lie and always speak and know</strong><br>
+→ never lie, always speak truthfully and learn
+</div>
+</div>
+
+<div class="alphabet" id="alphabet">
+<h2 style="text-align:center;margin-bottom:20px;">The 88 Hieroglyphs</h2>
+</div>
+
+<div class="composer">
+<h2>Compose a story</h2>
+<p style="font-size:0.85em;color:#888;margin-bottom:12px;">Click glyphs above to build a sequence.</p>
+<div class="story-display" id="story"></div>
+<div class="controls">
+<button onclick="undoGlyph()">← Undo</button>
+<button onclick="clearStory()">Clear</button>
+<button onclick="copyStory()">Copy text</button>
+</div>
+</div>
+
+<div class="examples">
+<h2 style="margin-bottom:12px;">Example stories</h2>
+<div id="examples"></div>
+</div>
+
+<footer>
+<p>88 symbols. any story. any language. any century.</p>
+<p style="margin-top:8px;"><a href="https://github.com/ariannamethod/caveLLMan">github</a> · built on <a href="https://github.com/ariannamethod/notorch">notorch</a> · by <a href="https://github.com/ariannamethod">arianna method</a></p>
+</footer>
+
+<script>
+const CATEGORIES = [
+  {name:"NATURE", glyphs:["water","fire","earth","stone","tree","sky","light","dark","cold"]},
+  {name:"BEINGS", glyphs:["person","man","woman","child","old","spirit","AI","animal"]},
+  {name:"BODY", glyphs:["body","food","sleep","pain","strength"]},
+  {name:"EMOTION", glyphs:["joy","grief","love","fear","anger","longing","tired","stress"]},
+  {name:"VERBS", glyphs:["go","make","break","see","speak","hear","seek","give","want","miss","agree"]},
+  {name:"SOCIAL", glyphs:["home","outside","work","internet","bond","conflict"]},
+  {name:"MIND", glyphs:["know","idea","think","dream","remember","lie"]},
+  {name:"SPACE", glyphs:["path","up","down","far","back"]},
+  {name:"TIME", glyphs:["before","now","after","never","always"]},
+  {name:"GRAMMAR", glyphs:["not","many","much","and","one","question","how","cause"]},
+  {name:"EXTENDED", glyphs:["me","you","other","money","change","write","choose","help","have","free","death","music","good"]},
+  {name:"SUPER", glyphs:["small","same","BE","wait"]},
+];
+
+const EXAMPLES = [
+  {g:["me","BE","change","and","choose","good","now"], t:"I am changing and choosing good now"},
+  {g:["never","lie","and","always","speak","and","know"], t:"never lie, always speak and know"},
+  {g:["old","woman","remember","and","give","child","know"], t:"an old woman remembers and teaches a child"},
+  {g:["me","BE","anger","cause","you","lie"], t:"I am angry because you lied"},
+  {g:["spirit","BE","light","not","body","not","pain"], t:"spirit is light — no body, no pain"},
+  {g:["man","woman","bond","love","home","child"], t:"man and woman bond in love, home, children"},
+];
+
+let story = [];
+
+function renderAlphabet() {
+  const el = document.getElementById('alphabet');
+  let html = '';
+  for (const cat of CATEGORIES) {
+    html += `<div class="cat-title">${cat.name} (${cat.glyphs.length})</div><div class="glyph-grid">`;
+    for (const g of cat.glyphs) {
+      html += `<div class="glyph" onclick="addGlyph('${g}')"><img src="glyphs/${g}.svg" alt="${g}"><div class="name">${g}</div></div>`;
+    }
+    html += '</div>';
+  }
+  el.innerHTML += html;
+}
+
+function addGlyph(name) {
+  story.push(name);
+  renderStory();
+}
+
+function undoGlyph() {
+  story.pop();
+  renderStory();
+}
+
+function clearStory() {
+  story = [];
+  renderStory();
+}
+
+function copyStory() {
+  navigator.clipboard.writeText(story.join(' '));
+}
+
+function renderStory() {
+  const el = document.getElementById('story');
+  if (story.length === 0) {
+    el.innerHTML = '<span style="color:#ccc">click glyphs to compose...</span>';
+    return;
+  }
+  el.innerHTML = story.map(g =>
+    `<div class="token"><img src="glyphs/${g}.svg" alt="${g}"><div class="label">${g}</div></div>`
+  ).join('') + '<div class="cursor"></div>';
+}
+
+function renderExamples() {
+  const el = document.getElementById('examples');
+  el.innerHTML = EXAMPLES.map(ex =>
+    `<div class="example"><div class="glyphs">${ex.g.map(g => `<img src="glyphs/${g}.svg" title="${g}">`).join('')}</div><div class="text">${ex.g.join(' ')} — <em>${ex.t}</em></div></div>`
+  ).join('');
+}
+
+renderAlphabet();
+renderStory();
+renderExamples();
+</script>
+</body>
+</html>
