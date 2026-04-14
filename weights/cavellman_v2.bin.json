@@ -1,0 +1,13 @@
+{
+  "preset": "small",
+  "embd": 96,
+  "heads": 8,
+  "layers": 4,
+  "ctx": 128,
+  "vocab_size": 32,
+  "params": 461856,
+  "steps": 12000,
+  "final_loss": 0.9011,
+  "dataset": "data/cavellman_20k.txt",
+  "seed": 42
+}

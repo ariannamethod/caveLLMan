@@ -2,40 +2,114 @@
 <html><head><meta charset="utf-8"><style>
 body { background: #fff; color: #111; font-family: monospace; padding: 20px; }
 h1 { color: #000; text-align: center; }
-.grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 16px; max-width: 900px; margin: 0 auto; }
-.glyph { text-align: center; padding: 12px; }
-.glyph svg { width: 56px; height: 56px; color: #000; }
-.glyph .name { font-size: 11px; margin-top: 6px; color: #444; }
-.glyph .id { font-size: 9px; color: #999; }
-.cat { grid-column: 1 / -1; font-size: 13px; color: #000; font-weight: bold; margin-top: 16px; border-bottom: 2px solid #000; padding-bottom: 4px; }
+.grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 12px; max-width: 900px; margin: 0 auto; }
+.glyph { text-align: center; padding: 8px; }
+.glyph img { width: 48px; height: 48px; }
+.glyph .name { font-size: 10px; margin-top: 4px; color: #444; }
+.cat { grid-column: 1 / -1; font-size: 13px; color: #000; font-weight: bold; margin-top: 14px; border-bottom: 2px solid #000; padding-bottom: 3px; }
 </style></head><body>
-<h1>CaveLLMan — 32 Hieroglyphs</h1>
+<h1>caveLLMan — 88 Hieroglyphs</h1>
 <div class="grid">
-<div class="cat">ELEMENTS</div>
-<script>
-const glyphs = [
-  ["light","dark","water","fire"],
-  ["tree","mountain","home","path"],
-  ["BODY"],
-  ["strength","pain","sleep","food"],
-  ["EMOTION"],
-  ["joy","grief","love","fear","anger"],
-  ["PEOPLE"],
-  ["person","child","group"],
-  ["MIND"],
-  ["idea","knowledge","sound","prayer"],
-  ["ACTION"],
-  ["create","destroy","seek","death"],
-  ["GRAMMAR"],
-  ["not","many","when","and"]
-];
-const cats = {BODY:1,EMOTION:1,PEOPLE:1,MIND:1,ACTION:1,GRAMMAR:1,ELEMENTS:1};
-let id=0;
-glyphs.flat().forEach(g => {
-  if(cats[g]) { document.write(`<div class="cat">${g}</div>`); return; }
-  id++;
-  document.write(`<div class="glyph"><object data="${g}.svg" type="image/svg+xml" width="48" height="48"></object><div class="name">${g}</div><div class="id">#${id}</div></div>`);
-});
-</script>
+<div class="cat">NATURE (9)</div>
+<div class="glyph"><img src="water.svg"><div class="name">water</div></div>
+<div class="glyph"><img src="fire.svg"><div class="name">fire</div></div>
+<div class="glyph"><img src="earth.svg"><div class="name">earth</div></div>
+<div class="glyph"><img src="stone.svg"><div class="name">stone</div></div>
+<div class="glyph"><img src="tree.svg"><div class="name">tree</div></div>
+<div class="glyph"><img src="sky.svg"><div class="name">sky</div></div>
+<div class="glyph"><img src="light.svg"><div class="name">light</div></div>
+<div class="glyph"><img src="dark.svg"><div class="name">dark</div></div>
+<div class="glyph"><img src="cold.svg"><div class="name">cold</div></div>
+<div class="cat">BEINGS (8)</div>
+<div class="glyph"><img src="person.svg"><div class="name">person</div></div>
+<div class="glyph"><img src="man.svg"><div class="name">man</div></div>
+<div class="glyph"><img src="woman.svg"><div class="name">woman</div></div>
+<div class="glyph"><img src="child.svg"><div class="name">child</div></div>
+<div class="glyph"><img src="old.svg"><div class="name">old</div></div>
+<div class="glyph"><img src="spirit.svg"><div class="name">spirit</div></div>
+<div class="glyph"><img src="AI.svg"><div class="name">AI</div></div>
+<div class="glyph"><img src="animal.svg"><div class="name">animal</div></div>
+<div class="cat">BODY (5)</div>
+<div class="glyph"><img src="body.svg"><div class="name">body</div></div>
+<div class="glyph"><img src="food.svg"><div class="name">food</div></div>
+<div class="glyph"><img src="sleep.svg"><div class="name">sleep</div></div>
+<div class="glyph"><img src="pain.svg"><div class="name">pain</div></div>
+<div class="glyph"><img src="strength.svg"><div class="name">strength</div></div>
+<div class="cat">EMOTION (8)</div>
+<div class="glyph"><img src="joy.svg"><div class="name">joy</div></div>
+<div class="glyph"><img src="grief.svg"><div class="name">grief</div></div>
+<div class="glyph"><img src="love.svg"><div class="name">love</div></div>
+<div class="glyph"><img src="fear.svg"><div class="name">fear</div></div>
+<div class="glyph"><img src="anger.svg"><div class="name">anger</div></div>
+<div class="glyph"><img src="longing.svg"><div class="name">longing</div></div>
+<div class="glyph"><img src="tired.svg"><div class="name">tired</div></div>
+<div class="glyph"><img src="stress.svg"><div class="name">stress</div></div>
+<div class="cat">VERBS (11)</div>
+<div class="glyph"><img src="go.svg"><div class="name">go</div></div>
+<div class="glyph"><img src="make.svg"><div class="name">make</div></div>
+<div class="glyph"><img src="break.svg"><div class="name">break</div></div>
+<div class="glyph"><img src="see.svg"><div class="name">see</div></div>
+<div class="glyph"><img src="speak.svg"><div class="name">speak</div></div>
+<div class="glyph"><img src="hear.svg"><div class="name">hear</div></div>
+<div class="glyph"><img src="seek.svg"><div class="name">seek</div></div>
+<div class="glyph"><img src="give.svg"><div class="name">give</div></div>
+<div class="glyph"><img src="want.svg"><div class="name">want</div></div>
+<div class="glyph"><img src="miss.svg"><div class="name">miss</div></div>
+<div class="glyph"><img src="agree.svg"><div class="name">agree</div></div>
+<div class="cat">SOCIAL (6)</div>
+<div class="glyph"><img src="home.svg"><div class="name">home</div></div>
+<div class="glyph"><img src="outside.svg"><div class="name">outside</div></div>
+<div class="glyph"><img src="work.svg"><div class="name">work</div></div>
+<div class="glyph"><img src="internet.svg"><div class="name">internet</div></div>
+<div class="glyph"><img src="bond.svg"><div class="name">bond</div></div>
+<div class="glyph"><img src="conflict.svg"><div class="name">conflict</div></div>
+<div class="cat">MIND (6)</div>
+<div class="glyph"><img src="know.svg"><div class="name">know</div></div>
+<div class="glyph"><img src="idea.svg"><div class="name">idea</div></div>
+<div class="glyph"><img src="think.svg"><div class="name">think</div></div>
+<div class="glyph"><img src="dream.svg"><div class="name">dream</div></div>
+<div class="glyph"><img src="remember.svg"><div class="name">remember</div></div>
+<div class="glyph"><img src="lie.svg"><div class="name">lie</div></div>
+<div class="cat">SPACE (5)</div>
+<div class="glyph"><img src="path.svg"><div class="name">path</div></div>
+<div class="glyph"><img src="up.svg"><div class="name">up</div></div>
+<div class="glyph"><img src="down.svg"><div class="name">down</div></div>
+<div class="glyph"><img src="far.svg"><div class="name">far</div></div>
+<div class="glyph"><img src="back.svg"><div class="name">back</div></div>
+<div class="cat">TIME (5)</div>
+<div class="glyph"><img src="before.svg"><div class="name">before</div></div>
+<div class="glyph"><img src="now.svg"><div class="name">now</div></div>
+<div class="glyph"><img src="after.svg"><div class="name">after</div></div>
+<div class="glyph"><img src="never.svg"><div class="name">never</div></div>
+<div class="glyph"><img src="always.svg"><div class="name">always</div></div>
+<div class="cat">GRAMMAR (8)</div>
+<div class="glyph"><img src="not.svg"><div class="name">not</div></div>
+<div class="glyph"><img src="many.svg"><div class="name">many</div></div>
+<div class="glyph"><img src="much.svg"><div class="name">much</div></div>
+<div class="glyph"><img src="and.svg"><div class="name">and</div></div>
+<div class="glyph"><img src="one.svg"><div class="name">one</div></div>
+<div class="glyph"><img src="question.svg"><div class="name">question</div></div>
+<div class="glyph"><img src="how.svg"><div class="name">how</div></div>
+<div class="glyph"><img src="cause.svg"><div class="name">cause</div></div>
+<div class="cat">EXTENDED (13)</div>
+<div class="glyph"><img src="me.svg"><div class="name">me</div></div>
+<div class="glyph"><img src="you.svg"><div class="name">you</div></div>
+<div class="glyph"><img src="other.svg"><div class="name">other</div></div>
+<div class="glyph"><img src="money.svg"><div class="name">money</div></div>
+<div class="glyph"><img src="change.svg"><div class="name">change</div></div>
+<div class="glyph"><img src="write.svg"><div class="name">write</div></div>
+<div class="glyph"><img src="choose.svg"><div class="name">choose</div></div>
+<div class="glyph"><img src="help.svg"><div class="name">help</div></div>
+<div class="glyph"><img src="have.svg"><div class="name">have</div></div>
+<div class="glyph"><img src="free.svg"><div class="name">free</div></div>
+<div class="glyph"><img src="death.svg"><div class="name">death</div></div>
+<div class="glyph"><img src="music.svg"><div class="name">music</div></div>
+<div class="glyph"><img src="good.svg"><div class="name">good</div></div>
+<div class="cat">SCALE + RELATION (2)</div>
+<div class="glyph"><img src="small.svg"><div class="name">small</div></div>
+<div class="glyph"><img src="same.svg"><div class="name">same</div></div>
+<div class="cat">SUPER-VERB (2)</div>
+<div class="glyph"><img src="BE.svg"><div class="name">BE</div></div>
+<div class="glyph"><img src="wait.svg"><div class="name">wait</div></div>
 </div>
 </body></html>

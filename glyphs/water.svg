@@ -1,4 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-  <path d="M3 8 Q7 4 12 8 Q17 12 21 8"/>
-  <path d="M3 14 Q7 10 12 14 Q17 18 21 14"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="2.5" stroke-linecap="round"><path d="M3 8Q7 4 12 8Q17 12 21 8"/><path d="M3 14Q7 10 12 14Q17 18 21 14"/></svg>
