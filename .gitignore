@@ -1,0 +1,11 @@
+*.pyc
+__pycache__/
+
+# notorch build artifacts
+train_emolm
+infer_emolm
+*.o
+*.a
+*.bin
+train_emolm
+infer_emolm
