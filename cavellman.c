@@ -877,31 +877,64 @@ typedef struct {
     pthread_mutex_t lock;
 } AsyncLearner;
 
+/*
+ * Split text into sentences (phonons, per SPA from Q).
+ * Tokens are atoms. Sentences are phonons. — Ландау's invention.
+ * Splits on .!? followed by space/newline/EOF.
+ */
 static void learn_from_text(AsyncLearner* al, const char* text, int text_len) {
-    /* Split into lines, tokenize each, Hebbian update */
     char* buf = (char*)malloc(text_len + 1);
     memcpy(buf, text, text_len); buf[text_len] = '\0';
 
-    char* line = strtok(buf, "\n");
-    while (line) {
+    /* Sentence splitting: .!? followed by space/newline/end */
+    int sent_start = 0;
+    for (int i = 0; i <= text_len; i++) {
+        int is_boundary = (i == text_len);
+        if (!is_boundary && (buf[i] == '.' || buf[i] == '!' || buf[i] == '?')) {
+            /* Check next char is space, newline, quote, or end */
+            int next = (i + 1 < text_len) ? buf[i + 1] : ' ';
+            if (next == ' ' || next == '\n' || next == '\r' || next == '"' ||
+                next == '\'' || next == ')' || i + 1 >= text_len)
+                is_boundary = 1;
+        }
+        if (!is_boundary) continue;
+
+        /* Extract sentence */
+        int end = (i < text_len) ? i + 1 : i;
+        int len = end - sent_start;
+        if (len < 3) { sent_start = end; continue; }
+
+        char sentence[4096];
+        if (len >= 4096) len = 4095;
+        memcpy(sentence, buf + sent_start, len);
+        sentence[len] = '\0';
+        sent_start = end;
+
+        /* Skip whitespace-only sentences */
+        int has_alpha = 0;
+        for (int j = 0; j < len; j++)
+            if ((sentence[j] >= 'a' && sentence[j] <= 'z') ||
+                (sentence[j] >= 'A' && sentence[j] <= 'Z')) { has_alpha = 1; break; }
+        if (!has_alpha) continue;
+
         int tokens[MAX_SEQ];
-        int n = semantic_tokenize_line(line, al->vocab, tokens, MAX_SEQ - 1);
+        int n = semantic_tokenize_line(sentence, al->vocab, tokens, MAX_SEQ - 1);
         if (n >= 2) {
             pthread_mutex_lock(&al->lock);
 
-            /* Hebbian update: passive reading — 0.3x signal, V-only */
+            /* Hebbian: passive reading — 0.3x signal, V-only */
             hebbian_update(al->model, NULL, al->vocab->vocab_size + 2, tokens, n, 1);
 
-            /* Co-occurrence update */
+            /* Co-occurrence */
             cooccur_update(&al->model->cooccur, tokens, n);
 
-            /* Try emergence */
+            /* Survival check + emergence */
+            check_symbol_survival(al->model, al->vocab);
             try_emerge_symbol(al->model, al->vocab);
 
             al->lines_learned++;
             pthread_mutex_unlock(&al->lock);
         }
-        line = strtok(NULL, "\n");
     }
     free(buf);
 }
@@ -937,7 +970,7 @@ static void* learner_thread(void* arg) {
             fseek(f, 0, SEEK_END);
             long fsize = ftell(f);
             fseek(f, 0, SEEK_SET);
-            if (fsize > 10 * 1024 * 1024) { fclose(f); continue; } /* max 10MB */
+            if (fsize > 2 * 1024 * 1024) { fclose(f); continue; } /* max 2MB per file */
             char* content = (char*)malloc(fsize + 1);
             fread(content, 1, fsize, f);
             content[fsize] = '\0';
