@@ -32,7 +32,7 @@
 #define MAX_SEQ         128
 #define MAX_EMERGED     64      /* max new symbols the model can create */
 #define COOCCUR_SIZE    256     /* co-occurrence matrix dimension */
-#define HEBBIAN_RANK    8       /* low-rank Hebbian LoRA */
+#define HEBBIAN_RANK    4       /* low-rank Hebbian LoRA (Sage 3: 8 too high for 96-dim) */
 #define EMERGE_THRESHOLD 0.85f  /* co-occurrence threshold for emergence */
 #define DISCIPLINE_WINDOW 100   /* interactions between emergence attempts */
 
@@ -81,8 +81,15 @@ typedef struct {
     int  glyph_b;           /* second component glyph id */
     float strength;         /* co-occurrence strength at time of emergence */
     int  born_at;           /* interaction number */
+    int  use_count;         /* times used since birth */
+    int  alive;             /* 0 = dead (failed survival), 1 = alive, 2 = frozen (primitive) */
+    int  depth;             /* 1 = base pair, 2+ = chain */
     char name[32];          /* auto-generated name: "glyph_a+glyph_b" */
 } EmergedSymbol;
+
+#define SURVIVAL_USES    20   /* must be used 20 times... */
+#define SURVIVAL_WINDOW  200  /* ...within 200 interactions of birth, or die */
+#define MAX_DEPTH        3    /* depth cap — beyond this, freeze as new primitive */
 
 /* ── Model ──────────────────────────────────────────────────────────────── */
 
@@ -195,7 +202,7 @@ static int try_emerge_symbol(CaveModel* model, CaveVocab* vocab) {
     CoOccurrence* co = &model->cooccur;
 
     if (model->n_emerged >= MAX_EMERGED) return -1;
-    if (co->total_interactions - co->last_emergence < DISCIPLINE_WINDOW) return -1;
+    /* Birth is free — survival is not (checked in check_symbol_survival) */
 
     /* Find strongest non-emerged pair */
     float best_score = 0;
@@ -223,15 +230,28 @@ static int try_emerge_symbol(CaveModel* model, CaveVocab* vocab) {
 
     if (best_a < 0) return -1;
 
+    /* Compute depth: if either parent is emerged, depth = max(parent depths) + 1 */
+    int depth = 1;
+    for (int k = 0; k < model->n_emerged; k++) {
+        int eid = vocab->base_size + k;
+        if ((eid == best_a || eid == best_b) && model->emerged[k].alive) {
+            if (model->emerged[k].depth + 1 > depth)
+                depth = model->emerged[k].depth + 1;
+        }
+    }
+    if (depth > MAX_DEPTH) return -1; /* too deep — don't create */
+
     /* Emerge! */
     EmergedSymbol* sym = &model->emerged[model->n_emerged];
     sym->glyph_a = best_a;
     sym->glyph_b = best_b;
     sym->strength = best_score;
     sym->born_at = co->total_interactions;
+    sym->use_count = 0;
+    sym->alive = 1;
+    sym->depth = depth;
     snprintf(sym->name, 32, "%s+%s", vocab->tokens[best_a], vocab->tokens[best_b]);
 
-    /* Add to vocab */
     int new_id = vocab->vocab_size;
     strncpy(vocab->tokens[new_id], sym->name, 31);
     vocab->tokens[new_id][31] = '\0';
@@ -240,10 +260,49 @@ static int try_emerge_symbol(CaveModel* model, CaveVocab* vocab) {
     model->n_emerged++;
     co->last_emergence = co->total_interactions;
 
-    printf("\n  *** SYMBOL EMERGED: %s (id=%d, strength=%.3f, born at interaction %d) ***\n\n",
-           sym->name, new_id, best_score, sym->born_at);
+    printf("\n  *** SYMBOL EMERGED: %s (id=%d, depth=%d, strength=%.3f) ***\n\n",
+           sym->name, new_id, depth, best_score);
 
     return new_id;
+}
+
+/*
+ * Symbol survival check — evolution needs death.
+ * If a symbol hasn't been used SURVIVAL_USES times within SURVIVAL_WINDOW
+ * interactions of birth, it dies. If it survives and depth == MAX_DEPTH,
+ * freeze it — it becomes a new primitive.
+ */
+static void check_symbol_survival(CaveModel* model, CaveVocab* vocab) {
+    int now = model->cooccur.total_interactions;
+    for (int i = 0; i < model->n_emerged; i++) {
+        EmergedSymbol* sym = &model->emerged[i];
+        if (sym->alive != 1) continue; /* skip dead or frozen */
+
+        int age = now - sym->born_at;
+        if (age >= SURVIVAL_WINDOW) {
+            if (sym->use_count < SURVIVAL_USES) {
+                /* Death — not used enough */
+                sym->alive = 0;
+                printf("  *** SYMBOL DIED: %s (used %d/%d times in %d interactions) ***\n",
+                       sym->name, sym->use_count, SURVIVAL_USES, age);
+            } else if (sym->depth >= MAX_DEPTH) {
+                /* Freeze — survived at max depth, becomes primitive */
+                sym->alive = 2;
+                printf("  *** SYMBOL FROZEN: %s → new primitive (depth %d, used %d times) ***\n",
+                       sym->name, sym->depth, sym->use_count);
+            }
+        }
+    }
+}
+
+/* Count emerged symbol usage in a token sequence */
+static void count_emerged_usage(CaveModel* model, CaveVocab* vocab, int* tokens, int len) {
+    for (int t = 0; t < len; t++) {
+        int id = tokens[t];
+        if (id >= vocab->base_size && id < vocab->base_size + model->n_emerged) {
+            model->emerged[id - vocab->base_size].use_count++;
+        }
+    }
 }
 
 /* ── Hebbian LoRA allocation ────────────────────────────────────────────── */
@@ -413,20 +472,51 @@ static float* model_forward(CaveModel* m, int token_id, int pos) {
 
 /* ── Hebbian update after generation ────────────────────────────────────── */
 
-static void hebbian_update(CaveModel* m, int* context, int ctx_len,
-                           int* generated, int gen_len) {
-    /* Signal: average "surprise" of generation — higher = more learning */
-    float signal = 1.0f;  /* uniform for now, could weight by novelty */
+/*
+ * Compute prediction error signal for a token:
+ * how surprised was the model? ||embedding_predicted - embedding_actual|| / sqrt(E)
+ * Normalized to [0.1, 2.0]. Floor at 0.1 — even boring tokens leave a trace.
+ */
+static float prediction_error_signal(CaveModel* m, float* logits, int actual_id, int vocab_size) {
+    /* Softmax to get predicted distribution */
+    float mx = logits[0];
+    for (int i = 1; i < vocab_size; i++) if (logits[i] > mx) mx = logits[i];
+    float sum = 0;
+    for (int i = 0; i < vocab_size; i++) sum += expf(logits[i] - mx);
+    float predicted_prob = expf(logits[actual_id] - mx) / sum;
 
-    /* For each generated token, update LoRA weights at each layer */
+    /* Signal = -log(p) normalized. High surprise = high signal */
+    float surprise = -logf(predicted_prob + 1e-8f);
+    float signal = surprise / logf((float)vocab_size); /* normalize by max possible surprise */
+    if (signal < 0.1f) signal = 0.1f;
+    if (signal > 2.0f) signal = 2.0f;
+    return signal;
+}
+
+static void hebbian_update(CaveModel* m, float* last_logits, int vocab_size,
+                           int* generated, int gen_len, int is_passive) {
     for (int l = 0; l < N_L; l++) {
         Layer* ly = &m->layers[l];
-        /* Use the embedding of generated tokens as x and dy */
         for (int g = 0; g < gen_len; g++) {
+            /* Prediction error signal — learn more from surprise */
+            float signal = (last_logits && g == gen_len - 1)
+                ? prediction_error_signal(m, last_logits, generated[g], vocab_size)
+                : 1.0f;
+
+            /* Passive reading (ingested text) = 0.3x, active conversation = 1.0x */
+            if (is_passive) signal *= 0.3f;
+
+            /* Boost for emerged symbols — reinforce what the system discovered */
+            if (generated[g] >= m->cooccur.total_interactions) signal *= 1.5f;
+
             float* x_emb = m->wte->data + generated[g] * E;
-            float* dy = x_emb;  /* self-reinforcement — Hebbian */
-            nt_hebbian_step(ly->heb_A_q, ly->heb_B_q, E, E, HEBBIAN_RANK,
-                           x_emb, dy, signal, m->hebbian_lr, m->hebbian_decay);
+            float* dy = x_emb;
+
+            /* Active conversation: update Q + V. Passive: V only */
+            if (!is_passive) {
+                nt_hebbian_step(ly->heb_A_q, ly->heb_B_q, E, E, HEBBIAN_RANK,
+                               x_emb, dy, signal, m->hebbian_lr, m->hebbian_decay);
+            }
             nt_hebbian_step(ly->heb_A_v, ly->heb_B_v, E, E, HEBBIAN_RANK,
                            x_emb, dy, signal, m->hebbian_lr, m->hebbian_decay);
         }
@@ -510,10 +600,13 @@ static void generate(CaveModel* m, CaveVocab* vocab, int* prompt, int prompt_len
 
     /* ── POST-GENERATION: Hebbian update + co-occurrence + emergence ── */
 
-    /* 1. Hebbian plasticity: learn from this interaction */
-    hebbian_update(m, prompt, prompt_len, gen_tokens, gen_len);
+    /* 1. Hebbian plasticity: learn from this interaction (active, full signal) */
+    hebbian_update(m, NULL, vocab->vocab_size + 2, gen_tokens, gen_len, 0);
 
-    /* 2. Co-occurrence: track which glyphs appear together */
+    /* 2. Count emerged symbol usage */
+    count_emerged_usage(m, vocab, gen_tokens, gen_len);
+
+    /* 3. Co-occurrence: track which glyphs appear together */
     int all_tokens[MAX_SEQ];
     int all_len = 0;
     for (int i = 0; i < prompt_len; i++) all_tokens[all_len++] = prompt[i];
@@ -523,7 +616,10 @@ static void generate(CaveModel* m, CaveVocab* vocab, int* prompt, int prompt_len
     /* 3. Decay co-occurrence (slow) */
     cooccur_decay(&m->cooccur, 0.999f);
 
-    /* 4. Try symbol emergence */
+    /* 5. Check survival — evolution needs death */
+    check_symbol_survival(m, vocab);
+
+    /* 6. Try symbol emergence (birth is free, survival is not) */
     int emerged = try_emerge_symbol(m, vocab);
     if (emerged >= 0) {
         printf("  [the cave has a new sign: %s]\n", vocab->tokens[emerged]);
@@ -793,8 +889,8 @@ static void learn_from_text(AsyncLearner* al, const char* text, int text_len) {
         if (n >= 2) {
             pthread_mutex_lock(&al->lock);
 
-            /* Hebbian update: treat each line as a "conversation" */
-            hebbian_update(al->model, tokens, n, tokens, n);
+            /* Hebbian update: passive reading — 0.3x signal, V-only */
+            hebbian_update(al->model, NULL, al->vocab->vocab_size + 2, tokens, n, 1);
 
             /* Co-occurrence update */
             cooccur_update(&al->model->cooccur, tokens, n);
