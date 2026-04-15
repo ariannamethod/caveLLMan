@@ -268,24 +268,24 @@ node tests/test_semantic_tokenizer.js    # 35 tests
                     └──────┬───────┘
                            │ async thread
 ┌─────────────────┐        ▼
-│  Any English     │──▶ Semantic Tokenizer ──▶ 88 Glyph IDs
-│  text            │    2060 words → 88       (fixed vocab)
+│  Any English    │──▶ Semantic Tokenizer ──▶ 88 Glyph IDs
+│  text           │    2060 words → 88       (fixed vocab)
 └─────────────────┘                                │
                                                    ▼
                               ┌──────────────────────────────┐
-                              │  Transformer + Hebbian LoRA   │
-                              │  rank=4 on Q,V projections    │
-                              │  prediction error signal       │
+                              │  Transformer + Hebbian LoRA  │
+                              │  rank=4 on Q,V projections   │
+                              │  prediction error signal     │
                               ├──────────────────────────────┤
-                              │  Co-occurrence → emergence     │
-                              │  Born free, must survive 20/200│
-                              │  Depth cap 3 → freeze          │
+                              │  Co-occurrence → emergence   │
+                              │  Born free,  survive 20/200  │
+                              │  Depth cap 3 → freeze        │
                               └──────────────────────────────┘
                                            │
                                            ▼
                               ┌──────────────────────┐
-                              │  88+ SVG Hieroglyphs  │
-                              │  base + emerged signs  │
+                              │  88+ SVG Hieroglyphs │
+                              │  base + emerged sign │
                               └──────────────────────┘
 ```
 
