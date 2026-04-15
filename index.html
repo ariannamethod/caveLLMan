@@ -2,109 +2,407 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>caveLLMan — 88 Hieroglyphs</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Space+Grotesk:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
+:root {
+  --bg: #0d0b09;
+  --surface: #17140f;
+  --surface2: #201c16;
+  --border: #33291b;
+  --text: #dcd5ca;
+  --text-dim: #897f70;
+  --accent: #c4944c;
+  --accent-dim: rgba(196, 148, 76, 0.15);
+  --accent2: #e67e22;
+  --loss-high: #e74c3c;
+  --loss-mid: #f39c12;
+  --loss-low: #27ae60;
+  --mono: 'JetBrains Mono', monospace;
+  --sans: 'Space Grotesk', sans-serif;
+}
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: 'Courier New', monospace; background: #faf8f5; color: #222; }
+body { background: var(--bg); color: var(--text); font-family: var(--mono); min-height: 100vh; }
+.grain {
+  position: fixed; inset: 0; z-index: 9999; pointer-events: none; opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
 
-header { text-align: center; padding: 40px 20px 20px; }
-header h1 { font-size: 2.4em; letter-spacing: 2px; }
-header p { color: #666; margin-top: 8px; font-size: 0.95em; max-width: 640px; margin-left: auto; margin-right: auto; }
+/* ── Header ── */
+header {
+  padding: 1.5rem 2rem 1rem; border-bottom: 1px solid var(--border);
+  display: flex; align-items: baseline; gap: 1.5rem; flex-wrap: wrap;
+}
+header h1 { font-family: var(--sans); font-size: 1.6rem; font-weight: 700; color: var(--accent); letter-spacing: -0.03em; }
+header .tag { font-size: 0.7rem; color: var(--text-dim); background: var(--surface2); padding: 0.25rem 0.6rem; border-radius: 3px; border: 1px solid var(--border); }
+.train-status { margin-left: auto; font-size: 0.7rem; color: var(--text-dim); display: flex; align-items: center; gap: 0.4rem; }
+.train-status .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: pulse 1.2s infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
 
-.article { max-width: 720px; margin: 0 auto; padding: 20px; line-height: 1.7; font-size: 0.95em; color: #444; }
-.article h2 { color: #000; margin-top: 30px; margin-bottom: 10px; font-size: 1.3em; border-bottom: 2px solid #000; padding-bottom: 4px; }
-.article p { margin-bottom: 12px; }
-.article .highlight { background: #f0ece4; padding: 12px 16px; border-left: 3px solid #000; margin: 16px 0; font-size: 0.9em; }
+/* ── Article ── */
+.article {
+  max-width: 768px; margin: 0 auto; padding: 2rem 2rem 1rem;
+  font-family: var(--sans); line-height: 1.8; font-size: 0.95rem; color: var(--text);
+}
+.article h2 { color: var(--accent); margin-top: 2rem; margin-bottom: 0.75rem; font-size: 1.3rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
+.article p { margin-bottom: 1rem; color: #b0a898; }
+.article .highlight {
+  background: var(--surface2); padding: 1rem 1.2rem; border-left: 3px solid var(--accent);
+  margin: 1rem 0; font-family: var(--mono); font-size: 0.85rem; color: var(--text); line-height: 1.9;
+}
+.article .be-accent { color: var(--accent2); font-weight: 700; }
 
-.alphabet { max-width: 960px; margin: 30px auto; padding: 0 20px; }
-.cat-title { font-weight: bold; font-size: 0.85em; color: #000; border-bottom: 2px solid #000; padding-bottom: 3px; margin-top: 20px; margin-bottom: 10px; }
-.glyph-grid { display: flex; flex-wrap: wrap; gap: 6px; }
-.glyph { width: 72px; text-align: center; padding: 8px 4px; cursor: pointer; border-radius: 6px; transition: background 0.15s; }
-.glyph:hover { background: #e8e4dc; }
-.glyph.selected { background: #d4cfc4; }
-.glyph img { width: 36px; height: 36px; }
-.glyph .name { font-size: 9px; color: #555; margin-top: 3px; }
+/* ── Alphabet ── */
+.alphabet { max-width: 960px; margin: 1rem auto 2rem; padding: 0 2rem; }
+.alphabet h2 { text-align: center; color: var(--accent); font-family: var(--sans); margin-bottom: 1.5rem; }
+.cat-title {
+  font-weight: 600; font-size: 0.7rem; color: var(--accent); text-transform: uppercase;
+  letter-spacing: 0.08em; border-bottom: 1px solid var(--border);
+  padding-bottom: 0.3rem; margin-top: 1.2rem; margin-bottom: 0.6rem;
+}
+.glyph-grid { display: flex; flex-wrap: wrap; gap: 4px; }
+.glyph-cell {
+  width: 68px; text-align: center; padding: 6px 2px; border-radius: 4px;
+  transition: background 0.15s; cursor: default;
+}
+.glyph-cell:hover { background: var(--surface2); }
+.glyph-cell img { width: 32px; height: 32px; filter: invert(0.85); }
+.glyph-cell .gname { font-size: 0.55rem; color: var(--text-dim); margin-top: 2px; font-family: var(--mono); }
 
-.composer { max-width: 720px; margin: 30px auto; padding: 20px; }
-.composer h2 { font-size: 1.1em; margin-bottom: 12px; }
-.story-display { min-height: 60px; padding: 16px; background: #fff; border: 2px solid #000; border-radius: 8px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.story-display .token { display: flex; flex-direction: column; align-items: center; }
-.story-display .token img { width: 32px; height: 32px; }
-.story-display .token .label { font-size: 8px; color: #888; }
-.story-display .cursor { width: 2px; height: 40px; background: #000; animation: blink 1s infinite; }
-@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
-.controls { margin-top: 12px; display: flex; gap: 8px; }
-.controls button { padding: 8px 16px; font-family: inherit; font-size: 0.85em; border: 2px solid #000; background: #fff; cursor: pointer; border-radius: 4px; }
-.controls button:hover { background: #000; color: #fff; }
+/* ── Talk Section ── */
+.talk-section { max-width: 960px; margin: 0 auto; padding: 0 2rem 2rem; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.card-head {
+  padding: 0.75rem 1rem; border-bottom: 1px solid var(--border);
+  font-family: var(--sans); font-weight: 600; font-size: 0.85rem;
+  color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.08em;
+  display: flex; align-items: center; gap: 0.5rem;
+}
+.card-head .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: pulse 2s infinite; }
+.card-body { padding: 1rem; }
 
-.examples { max-width: 720px; margin: 20px auto; padding: 20px; }
-.example { background: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 12px 16px; margin-bottom: 10px; }
-.example .glyphs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
-.example .glyphs img { width: 24px; height: 24px; }
-.example .text { font-size: 0.85em; color: #666; }
+.kb-section { margin-bottom: 1rem; }
+.kb-cat-label { font-size: 0.6rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.3rem; margin-top: 0.6rem; }
+.kb-grid { display: flex; flex-wrap: wrap; gap: 3px; }
+.kb-btn {
+  display: flex; flex-direction: column; align-items: center; gap: 1px;
+  padding: 4px 5px; border: 1px solid var(--border); background: var(--bg);
+  border-radius: 4px; cursor: pointer; transition: all 0.15s; min-width: 52px;
+}
+.kb-btn:hover { border-color: var(--accent); background: var(--accent-dim); transform: scale(1.05); }
+.kb-btn img { width: 24px; height: 24px; filter: invert(0.85); }
+.kb-btn .kb-name { font-size: 0.5rem; color: var(--text-dim); font-family: var(--mono); }
+.kb-btn.be-btn { border-color: var(--accent2); }
+.kb-btn.be-btn:hover { background: rgba(230, 126, 34, 0.15); }
 
-footer { text-align: center; padding: 40px 20px; color: #999; font-size: 0.8em; }
-footer a { color: #666; }
+.input-display {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.8rem; min-height: 56px; display: flex; flex-wrap: wrap; gap: 6px;
+  align-items: center; margin-bottom: 0.75rem;
+}
+.input-display .tok { display: flex; flex-direction: column; align-items: center; }
+.input-display .tok img { width: 28px; height: 28px; filter: invert(0.85); }
+.input-display .tok .label { font-size: 0.5rem; color: var(--text-dim); }
+.input-display .cursor {
+  width: 2px; height: 36px; background: var(--accent);
+  animation: blink 0.8s step-end infinite;
+}
+@keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
+.input-placeholder { color: var(--text-dim); font-size: 0.8rem; }
+
+.controls { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+.btn {
+  font-family: var(--mono); font-size: 0.8rem; font-weight: 500;
+  padding: 0.5rem 1.2rem; border: 1px solid var(--border); border-radius: 4px;
+  cursor: pointer; transition: all 0.15s; background: var(--bg); color: var(--text);
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn-primary { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 700; }
+.btn-primary:hover { filter: brightness(1.15); color: var(--bg); }
+.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; filter: none; }
+
+.suggestions { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.suggestion {
+  font-size: 0.7rem; padding: 0.3rem 0.6rem; background: var(--surface2);
+  border: 1px solid var(--border); border-radius: 3px; cursor: pointer;
+  color: var(--text-dim); transition: all 0.15s;
+}
+.suggestion:hover { border-color: var(--accent); color: var(--accent); }
+
+.response-display {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 1rem; min-height: 60px; font-size: 1rem; line-height: 1.8;
+}
+.response-display .tok-prompt { opacity: 0.5; }
+.response-display .tok-gen {
+  animation: tokenPop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+  display: inline-flex; flex-direction: column; align-items: center; margin: 0 3px;
+}
+.response-display .tok-gen img { width: 32px; height: 32px; filter: invert(0.85); }
+.response-display .tok-gen .label { font-size: 0.5rem; color: var(--accent); }
+.response-display .tok-prompt img { width: 28px; height: 28px; filter: invert(0.5); }
+.response-display .tok-prompt .label { font-size: 0.5rem; color: var(--text-dim); }
+.response-display .tok-cursor {
+  display: inline-block; width: 2px; height: 1.2em; background: var(--accent);
+  vertical-align: text-bottom; margin-left: 1px;
+  animation: blink 0.8s step-end infinite;
+}
+.response-display .tok-end { opacity: 0.4; font-size: 0.8rem; color: var(--text-dim); margin-left: 4px; }
+@keyframes tokenPop { 0% { opacity: 0; transform: scale(0.3) translateY(8px); } 100% { opacity: 1; transform: none; } }
+
+.prob-bar-container { margin-top: 1rem; }
+.prob-bar-title { font-size: 0.65rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.4rem; }
+.prob-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem; font-size: 0.75rem; height: 1.6rem; }
+.prob-token { width: 5rem; text-align: right; display: flex; align-items: center; justify-content: flex-end; gap: 0.3rem; }
+.prob-token img { width: 16px; height: 16px; filter: invert(0.7); }
+.prob-track { flex: 1; height: 6px; background: var(--surface2); border-radius: 3px; overflow: hidden; }
+.prob-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+.prob-pct { width: 3.5rem; text-align: right; font-size: 0.65rem; color: var(--text-dim); }
+.prob-chosen .prob-token { color: var(--accent); font-weight: 700; }
+.prob-chosen .prob-fill { background: var(--accent) !important; }
+.prob-chosen .prob-pct { color: var(--accent); font-weight: 700; }
+.infer-step-label { font-size: 0.65rem; color: var(--text-dim); margin-top: 0.5rem; text-align: center; }
+
+/* ── Training Section ── */
+.train-section { max-width: 960px; margin: 0 auto; padding: 0 2rem 2rem; }
+details summary {
+  font-family: var(--sans); font-weight: 600; font-size: 0.9rem; color: var(--accent);
+  cursor: pointer; padding: 0.75rem 0; list-style: none;
+}
+details summary::-webkit-details-marker { display: none; }
+details summary::before { content: '▸ '; }
+details[open] summary::before { content: '▾ '; }
+
+.config-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.6rem; margin-bottom: 1rem; }
+.config-item { display: flex; flex-direction: column; gap: 0.2rem; }
+.config-item label { font-size: 0.6rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
+.config-item input {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  font-family: var(--mono); font-size: 0.8rem; padding: 0.35rem 0.5rem;
+  border-radius: 3px; outline: none; transition: border-color 0.2s;
+}
+.config-item input:focus { border-color: var(--accent); }
+.config-full { grid-column: 1 / -1; }
+
+.stats-row { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+.stat { flex: 1; min-width: 70px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 0.4rem 0.6rem; text-align: center; }
+.stat-val { font-size: 1.1rem; font-weight: 700; color: var(--accent); }
+.stat-label { font-size: 0.55rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 0.1rem; }
+
+.progress-bar { height: 3px; background: var(--bg); border-radius: 2px; overflow: hidden; margin-bottom: 0.75rem; }
+.progress-fill { height: 100%; background: var(--accent); width: 0%; transition: width 0.1s; border-radius: 2px; }
+
+#lossCanvas { width: 100%; height: 160px; display: block; margin-bottom: 0.75rem; }
+
+#logOutput {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+  padding: 0.6rem; font-size: 0.65rem; line-height: 1.5;
+  max-height: 180px; overflow-y: auto; color: var(--text-dim); white-space: pre-wrap;
+}
+#logOutput .loss-good { color: var(--loss-low); }
+#logOutput .loss-ok { color: var(--loss-mid); }
+#logOutput .loss-bad { color: var(--loss-high); }
+#logOutput .sample-line { color: var(--accent); }
+#logOutput .info { color: #6688bb; }
+
+.samples-grid { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.5rem; }
+.sample-tag {
+  background: var(--accent-dim); border: 1px solid rgba(196,148,76,0.25);
+  color: var(--accent); font-size: 0.75rem; padding: 0.3rem 0.6rem;
+  border-radius: 3px; animation: fadeIn 0.3s ease;
+}
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+/* ── Footer ── */
+footer {
+  max-width: 960px; margin: 2rem auto 0; padding: 2rem; border-top: 1px solid var(--border);
+  text-align: center; font-size: 0.75rem; color: var(--text-dim); line-height: 2;
+}
+footer a { color: var(--accent); text-decoration: none; }
+footer a:hover { text-decoration: underline; }
+
+@media (max-width: 640px) {
+  .config-grid { grid-template-columns: 1fr 1fr; }
+  header { padding: 1rem; }
+  .article, .alphabet, .talk-section, .train-section { padding-left: 1rem; padding-right: 1rem; }
+  .glyph-cell { width: 56px; }
+  .glyph-cell img { width: 26px; height: 26px; }
+  .kb-btn { min-width: 44px; }
+}
 </style>
 </head>
 <body>
+<div class="grain"></div>
 
 <header>
-<h1>caveLLMan</h1>
-<p>88 hieroglyphs. one super-verb. the grammar of being alive.</p>
+  <h1>caveLLMan</h1>
+  <span class="tag">88 hieroglyphs · one super-verb · the grammar of being alive</span>
+  <div class="train-status" id="trainStatus">
+    <span class="dot" id="trainDot" style="display:none"></span>
+    <span id="trainStatusText"></span>
+  </div>
 </header>
 
+<!-- ===== EDUCATIONAL ARTICLE ===== -->
 <div class="article">
-<h2>The 32 Signs</h2>
-<p>In 2016, paleoanthropologist Genevieve von Petzinger documented exactly 32 recurring geometric signs across 146 European cave sites spanning 30,000 years. Lines, chevrons, circles, spirals, zigzags, hands — the same symbols appearing from France to Indonesia to Australia. Not random. Not decoration. A shared cognitive vocabulary predating all known writing by 25,000 years.</p>
+  <h2>The 32 Signs</h2>
+  <p>In 2016, paleoanthropologist Genevieve von Petzinger documented exactly 32 recurring geometric signs across 146 European cave sites spanning 30,000 years. Lines, chevrons, circles, spirals, zigzags, hands — the same symbols appearing from France to Indonesia to Australia. Not random. Not decoration. A shared cognitive vocabulary predating all known writing by 25,000 years.</p>
+  <p>caveLLMan extends this vocabulary to 88 symbols — adding what a cave painter of the 21st century needs: <em>internet, AI, money, stress, freedom</em>. Plus one super-verb the ancients already knew.</p>
 
-<p>caveLLMan extends this vocabulary to 88 symbols — adding what a cave painter of the 21st century needs: internet, AI, money, stress, freedom. Plus a super-verb the ancients already knew: <strong>BE</strong>.</p>
+  <h2>BE — The Super-Verb</h2>
+  <p>One circle. The most powerful symbol in the alphabet. <span class="be-accent">BE</span> turns any noun into a verb, any concept into a lived state:</p>
+  <div class="highlight">
+    <span class="be-accent">BE</span> + fear = to be afraid<br>
+    <span class="be-accent">BE</span> + love = to love<br>
+    <span class="be-accent">BE</span> + fire = to burn<br>
+    <span class="be-accent">BE</span> + free = to be free<br>
+    <span class="be-accent">BE</span> + death = to die
+  </div>
+  <p>Without BE, these are nouns. With BE, they become experience. A cave painter 30,000 years ago would draw a circle around a figure to mean "this is happening." We kept the tradition.</p>
 
-<div class="highlight">
-<strong>BE</strong> turns any noun into a verb.<br>
-BE + fear = to be afraid. BE + love = to love. BE + fire = to burn.<br>
-One circle that doubles the expressiveness of the entire language.
+  <h2>How to Read</h2>
+  <p>Each story is a sequence of glyphs read left to right:</p>
+  <div class="highlight">
+    me <span class="be-accent">BE</span> fear dark not see path<br>
+    → I am afraid of the dark, I cannot see the way<br><br>
+    woman give child food and love<br>
+    → a woman gives a child food and love<br><br>
+    never lie and always speak and know<br>
+    → never lie, always speak truthfully and learn
+  </div>
 </div>
 
-<h2>How to read</h2>
-<p>Each story is a sequence of glyphs read left to right:</p>
-<div class="highlight">
-<strong>me BE fear dark not see path</strong><br>
-→ I am afraid of the dark, I cannot see the way<br><br>
-<strong>woman give child food and love</strong><br>
-→ a woman gives a child food and love<br><br>
-<strong>never lie and always speak and know</strong><br>
-→ never lie, always speak truthfully and learn
-</div>
+<!-- ===== THE 88 HIEROGLYPHS ===== -->
+<div class="alphabet">
+  <h2>The 88 Hieroglyphs</h2>
+  <div id="alphabetGrid"></div>
 </div>
 
-<div class="alphabet" id="alphabet">
-<h2 style="text-align:center;margin-bottom:20px;">The 88 Hieroglyphs</h2>
+<!-- ===== SPEAK IN HIEROGLYPHS ===== -->
+<div class="talk-section">
+  <div class="card">
+    <div class="card-head"><span class="dot" id="talkDot"></span> Speak in Hieroglyphs</div>
+    <div class="card-body">
+      <div class="suggestions" id="suggestions"></div>
+      <div id="keyboard"></div>
+      <div class="input-display" id="inputDisplay">
+        <span class="input-placeholder">click glyphs above to compose...</span>
+      </div>
+      <div class="controls">
+        <button class="btn" onclick="undoGlyph()">← Undo</button>
+        <button class="btn" onclick="clearInput()">Clear</button>
+        <button class="btn btn-primary" id="btnSpeak" onclick="speak()" disabled>Speak ▶</button>
+      </div>
+      <div class="response-display" id="responseDisplay">
+        <span style="color:var(--text-dim);font-size:0.8rem;" id="responseHint">The model is training... it will respond once ready.</span>
+      </div>
+      <div class="prob-bar-container" id="probBars" style="display:none;">
+        <div class="prob-bar-title">Prediction — Top Token Probabilities</div>
+        <div id="probContent"></div>
+        <div class="infer-step-label" id="inferStepLabel"></div>
+      </div>
+    </div>
+  </div>
 </div>
 
-<div class="composer">
-<h2>Compose a story</h2>
-<p style="font-size:0.85em;color:#888;margin-bottom:12px;">Click glyphs above to build a sequence.</p>
-<div class="story-display" id="story"></div>
-<div class="controls">
-<button onclick="undoGlyph()">← Undo</button>
-<button onclick="clearStory()">Clear</button>
-<button onclick="copyStory()">Copy text</button>
-</div>
-</div>
-
-<div class="examples">
-<h2 style="margin-bottom:12px;">Example stories</h2>
-<div id="examples"></div>
+<!-- ===== TRAINING (collapsible) ===== -->
+<div class="train-section">
+  <details id="trainDetails" open>
+    <summary>Training Engine</summary>
+    <div class="card" style="margin-top:0.5rem;">
+      <div class="card-body">
+        <div class="config-grid">
+          <div class="config-item">
+            <label>Embedding dim</label>
+            <input id="cfgEmbd" type="number" value="32" min="8" max="128" step="4">
+          </div>
+          <div class="config-item">
+            <label>Attention heads</label>
+            <input id="cfgHeads" type="number" value="4" min="1" max="16">
+          </div>
+          <div class="config-item">
+            <label>Layers</label>
+            <input id="cfgLayers" type="number" value="2" min="1" max="6">
+          </div>
+          <div class="config-item">
+            <label>Block size</label>
+            <input id="cfgBlock" type="number" value="32" min="8" max="64">
+          </div>
+          <div class="config-item">
+            <label>Train steps</label>
+            <input id="cfgSteps" type="number" value="3000" min="100" max="20000" step="100">
+          </div>
+          <div class="config-item">
+            <label>Learning rate</label>
+            <input id="cfgLR" type="number" value="0.01" min="0.001" max="0.1" step="0.001">
+          </div>
+          <div class="config-item">
+            <label>Temperature</label>
+            <input id="cfgTemp" type="number" value="0.7" min="0.1" max="2.0" step="0.1">
+          </div>
+          <div class="config-item">
+            <label>Mode</label>
+            <select id="cfgMode" style="font-family:var(--mono);font-size:0.75rem;padding:0.35rem 0.5rem;background:var(--bg);border:1px solid var(--border);color:var(--accent);border-radius:3px;outline:none;cursor:pointer;">
+              <option value="diffusion">Diffusion (recommended)</option>
+              <option value="autoregressive">Autoregressive</option>
+            </select>
+          </div>
+          <div class="config-item config-full" style="margin-top:0.5rem;">
+            <label>Dataset</label>
+            <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+              <select id="datasetSelect" onchange="switchDataset(this.value)" style="font-family:var(--mono);font-size:0.75rem;padding:0.35rem 0.5rem;background:var(--bg);border:1px solid var(--border);color:var(--accent);border-radius:3px;outline:none;cursor:pointer;">
+                <option value="glyphs">88 Hieroglyphs</option>
+                <option value="english">English sample</option>
+                <option value="hebrew">Hebrew sample</option>
+                <option value="custom">Custom (paste or upload)</option>
+              </select>
+              <span id="datasetInfo" style="font-size:0.6rem;color:var(--text-dim);"></span>
+            </div>
+          </div>
+          <div class="config-item config-full">
+            <label>Training data — one story per line (tokens auto-detected: space-split for words, char-split for CJK)</label>
+            <textarea id="cfgData" rows="6" style="background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:0.75rem;padding:0.5rem;border-radius:3px;outline:none;resize:vertical;min-height:100px;line-height:1.6;" placeholder="Paste any text — one story per line. The engine learns patterns from whatever you give it."></textarea>
+            <span style="font-size:0.55rem;color:var(--text-dim);margin-top:0.2rem;">Language-agnostic. Feed it Dracula, Hebrew poetry, emoji stories, or hieroglyphs — it learns.</span>
+          </div>
+          <div class="config-full" id="uploadZone" style="border:2px dashed var(--border);border-radius:6px;padding:1rem;text-align:center;cursor:pointer;transition:all 0.2s;color:var(--text-dim);font-size:0.75rem;margin-top:0.5rem;"
+               onclick="document.getElementById('fileInput').click()"
+               ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
+               ondragleave="this.style.borderColor='var(--border)'"
+               ondrop="event.preventDefault();this.style.borderColor='var(--border)';handleFileDrop(event)">
+            <input type="file" id="fileInput" accept=".txt" style="display:none" onchange="handleFileSelect(event)">
+            Drop a <strong>.txt</strong> file here, or click to browse
+          </div>
+          <div class="config-full" style="display:flex;gap:0.5rem;margin-top:0.5rem;">
+            <button id="btnTrain" class="btn btn-primary" onclick="startTraining()" style="margin-top:0">▶ Train</button>
+            <button id="btnStop" class="btn" onclick="stopTraining()" style="display:none;margin-top:0;color:var(--loss-high);border-color:var(--loss-high);">■ Stop</button>
+            <button class="btn" onclick="loadSampleData()" style="margin-top:0">Load sample data</button>
+          </div>
+        </div>
+        <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        <div class="stats-row">
+          <div class="stat"><div class="stat-val" id="statStep">—</div><div class="stat-label">Step</div></div>
+          <div class="stat"><div class="stat-val" id="statLoss">—</div><div class="stat-label">Loss</div></div>
+          <div class="stat"><div class="stat-val" id="statParams">—</div><div class="stat-label">Params</div></div>
+          <div class="stat"><div class="stat-val" id="statVocab">89</div><div class="stat-label">Vocab</div></div>
+        </div>
+        <canvas id="lossCanvas"></canvas>
+        <div id="logOutput">Select a dataset and press Train, or load pre-trained weights.</div>
+        <div class="samples-grid" id="samplesGrid"></div>
+      </div>
+    </div>
+  </details>
 </div>
 
 <footer>
-<p>88 symbols. any story. any language. any century.</p>
-<p style="margin-top:8px;"><a href="https://github.com/ariannamethod/caveLLMan">github</a> · built on <a href="https://github.com/ariannamethod/notorch">notorch</a> · by <a href="https://github.com/ariannamethod">arianna method</a></p>
+  <p>88 symbols. any story. any language. any century.</p>
+  <p>built on <a href="https://github.com/ariannamethod/notorch">notorch</a> · by <a href="https://github.com/ariannamethod">arianna method</a></p>
+  <p style="margin-top:0.5rem;font-size:0.65rem;">originally inspired by <a href="https://github.com/MattWenJun/emojiGPT">emojiGPT</a> by @MattWenJun</p>
 </footer>
 
+<script src="semantic_tokenizer.js"></script>
 <script>
+// ===== GLYPH DATA =====
 const CATEGORIES = [
   {name:"NATURE", glyphs:["water","fire","earth","stone","tree","sky","light","dark","cold"]},
   {name:"BEINGS", glyphs:["person","man","woman","child","old","spirit","AI","animal"]},
@@ -117,73 +415,1244 @@ const CATEGORIES = [
   {name:"TIME", glyphs:["before","now","after","never","always"]},
   {name:"GRAMMAR", glyphs:["not","many","much","and","one","question","how","cause"]},
   {name:"EXTENDED", glyphs:["me","you","other","money","change","write","choose","help","have","free","death","music","good"]},
-  {name:"SUPER", glyphs:["small","same","BE","wait"]},
+  {name:"SCALE + SUPER", glyphs:["small","same","BE","wait"]},
 ];
 
 const EXAMPLES = [
-  {g:["me","BE","change","and","choose","good","now"], t:"I am changing and choosing good now"},
-  {g:["never","lie","and","always","speak","and","know"], t:"never lie, always speak and know"},
-  {g:["old","woman","remember","and","give","child","know"], t:"an old woman remembers and teaches a child"},
-  {g:["me","BE","anger","cause","you","lie"], t:"I am angry because you lied"},
-  {g:["spirit","BE","light","not","body","not","pain"], t:"spirit is light — no body, no pain"},
-  {g:["man","woman","bond","love","home","child"], t:"man and woman bond in love, home, children"},
+  "me BE fear dark",
+  "woman give child food",
+  "never lie and always speak",
+  "spirit BE light not body",
+  "me BE change and choose good now",
+  "old man remember before",
 ];
 
-let story = [];
+const TRAINING_DATA_GLYPHS = `light person go outside see tree sky
+dark cold person fire food sleep dream
+child see animal give food love joy
+man woman home child food love joy
+person work money stress tired home sleep
+old person tree water think remember speak
+child hear music joy dream sleep love
+man go far path seek water earth tree
+woman child food home love give joy good
+light animal hear person go outside work
+person internet know idea think write make
+dark person sleep dream light after joy
+child question see sky know think dream
+man fire food give woman child joy love
+old woman speak know give child love good
+man woman love bond home child good always
+child see light sky joy love dream sleep
+woman work money home child food love good
+man woman conflict anger speak agree bond after
+person outside path tree water see far joy
+person go work money stress tired food sleep home
+dark cold sleep fire light food dream joy
+light work internet idea think make good
+child music hear see dream joy love sleep
+old man give child know speak love good
+man seek path far water earth tree see
+woman make food give child man love joy
+dark sleep dream light outside go see joy
+person fire food light dark sleep dream joy
+child joy music hear dream love sleep always
+woman man love bond home good child joy
+person work stress want free go outside path
+child see sky light tree water animal joy
+man make home stone earth tree good joy
+woman child love food sleep dream joy light
+old person tired sleep dream remember grief
+man woman love bond home child always good
+person internet know much idea think write change
+light outside tree sky see far joy good
+child animal water see give food joy love
+old man remember speak know grief miss love
+woman work money stress tired home child food
+man go far path water earth see tree joy
+person make idea think write change good joy
+dark cold fire light food sleep dream joy
+person go outside tree water sky see joy good
+child food joy sleep dream light love always
+woman think idea change choose free good path
+man work money have stress tired home sleep
+person outside tree water see joy good light
+old remember miss grief love speak know give
+child animal see hear joy love give food
+man woman conflict speak agree bond love after
+person internet seek know idea write think make
+light go outside path far see joy tree
+woman give child food love know good speak
+man go work money stress tired home sleep food
+person make fire food light see joy give
+child question how know think dream joy love
+old man woman bond love good speak know
+person work stress money want change free go
+light outside go see tree sky joy good
+man make food fire give woman child joy
+child see animal water joy love food give
+woman work money stress home child food love
+person path go far water earth see joy tree
+old tired dream sleep remember grief miss love
+man woman love bond child home good joy
+person go far path water earth tree see joy
+child hear music dream joy love sleep always
+woman choose free go far path joy good
+man work money tired stress home food sleep
+person outside tree water path see sky joy good
+old man speak know give child idea love good
+man woman love child home food joy good always
+person work stress money tired want change free
+light go outside see tree water sky joy good
+child food sleep dream joy love light always
+woman give child food love know speak good
+man go work money stress home tired food sleep
+person make fire food light see give joy good
+dark sleep dream light after joy outside go see
+child animal see hear joy love food give always
+old remember grief miss love speak know good
+man woman bond love home child joy good always
+person internet seek know idea think write make change`;
+
+const TRAINING_DATA = `the sun rose and the birds started singing
+a small boy woke up early and ran downstairs
+the old dog stretched by the fireplace and fell asleep
+she opened the window and cool morning air filled the room
+he made coffee and sat down to read the paper quietly
+the baker arrived at the shop before dawn to start the bread
+rain began to fall gently and the streets grew quiet
+the cat jumped on the windowsill and watched the sparrows outside
+two old friends met at the corner and talked for hours
+the child found a coin on the floor and kept it
+the teacher wrote a question on the board and waited
+she forgot her umbrella and walked home slowly in the drizzle
+the farmer looked at the sky and decided to harvest today
+a dog barked in the distance and the whole village woke up
+the train arrived late and everyone on the platform sighed
+he stayed awake all night reading and fell asleep at the table
+the little girl lost her balloon and cried until mom got a new one
+the fisherman cast his line into the river and waited quietly
+the fire crackled in the hearth and the family gathered around
+she planted seeds in the garden and promised to water them daily
+the wind blew hard and leaves flew everywhere
+grandpa told a story by the campfire and the children listened
+he went to the market and bought tomatoes and fresh bread
+she sang an old song and the baby fell asleep right away
+the ship left the harbor at sunrise
+the cat chased a butterfly in the garden but never caught it
+the neighbors sat together in the evening and drank mint tea
+the boy built a tower of blocks and it fell down
+the old woman knitted a scarf by the window
+they walked to the sea and dipped their feet in the cold water
+the rooster crowed in the morning and everyone woke up
+he fixed the bicycle and rode it to work
+she found an old book on the shelf and read it breathlessly
+the rain stopped and sunshine came from behind the clouds
+the children played football in the yard until dark
+mom made hot soup and the house smelled wonderful
+he gazed from the balcony at the sea and thought about everything
+she lit candles on friday evening and said a blessing
+the uncle arrived from abroad and everyone was happy to see him
+he played guitar and his friends sang along
+the girl drew a picture of a sunset in warm colors
+the baby laughed when he saw the dog running
+they sat in a cafe and watched the people pass by
+he read an important email and rushed to a meeting
+she studied all night for the exam and felt tired in the morning
+the wind brought the smell of the sea and salt
+the boy saw a cat on the fence and tried to call it
+the old man sat in the park and threw crumbs to the pigeons
+she did yoga in the morning and felt calm all day
+he drank a cold beer after a long day of work
+the shop closed and the owner pulled down the shutters
+they hiked in the valley and found a beautiful spot for a picnic
+the moon lit up the room and she could not sleep
+he heard music from far away and walked toward the sound
+she baked a cake for her son birthday
+the children ran down the street after the ice cream truck
+the rain fell hard and they went into the shelter
+she wrote a letter to her friend abroad and mailed it
+he found a wallet on the street and returned it to the owner
+the sun set behind the sea and the sky turned orange
+they built a little hut for the holiday and the kids decorated it
+he learned to drive and passed the test on the first try
+she read a story to the children before bedtime
+the dog dug a hole in the garden and the owner got upset
+they made hummus together and put lots of lemon
+the baby took his first steps and the parents clapped
+he sat on the train and watched the scenery rush past the window
+she went to the doctor because her throat hurt
+the boy read a book with a flashlight under the blanket
+they lit a bonfire on the beach and sang songs
+the neighbor started playing piano at night and she could not sleep
+he cooked steak and put lots of pepper
+she ran in the park every morning with her headphones on
+the children built a sandcastle on the beach
+he got a letter from the army and did not know what to do
+she started a new company and worked on it day and night
+they ate falafel in pita bread with lots of tahini
+the boy climbed a tree and saw the whole neighborhood from above
+the sun jumped from the sea and the day began
+he went to morning prayer and came back with a bread roll
+she laughed so hard that tears rolled down her face
+the camel walked in the desert and did not look back
+they sat on the roof and watched the stars
+the girl petted the cat and it purred happily
+he drank arak with friends on friday
+she bought a new dress for the wedding of her friend
+the boy ran with a kite in the open field
+they made a big shakshuka for the whole family
+he looked at the sunset from the mountain and breathed deeply
+she wrote code all night and found the bug at sunrise
+the old woman sat on the porch and knitted quietly
+they walked through the market and bought spices
+the morning light came through the curtains and warmed the bed
+he picked up his daughter from school and they got ice cream
+the storm knocked out the power and they lit candles
+she danced in the kitchen while making dinner
+the boy threw stones into the lake and counted the skips
+two sisters argued about something small then hugged and forgot
+the dog waited by the door all day for his owner
+an old man played chess alone in the park
+she packed her bags and moved to a new city
+the rain made puddles and children jumped in them laughing
+he fixed the leaky faucet and felt proud of himself
+the grandmother told stories nobody else remembered
+a cat slept in a patch of sunlight on the floor
+they planted a tree together on the first day of spring
+he wrote a poem on a napkin at the cafe
+she watched the sunrise from the hospital window
+the kids sold lemonade on the corner for pocket money
+an old couple held hands walking slowly through the park
+the power came back on and everyone cheered
+she burned dinner and they ordered pizza instead
+he taught his son to ride a bike in the parking lot
+the first snow fell and the whole city looked different
+they found a stray kitten and brought it home
+she got the job and called her mother right away
+the bread was still warm from the oven
+he fell asleep on the couch with the tv still on
+the flowers in the garden bloomed after weeks of rain
+a stranger helped her carry groceries up the stairs
+the boy asked why the sky is blue and nobody knew
+they sang happy birthday off key but with love
+he missed the last bus and walked home under the stars
+she reread the letter three times before putting it away
+the dog brought back a stick nobody had thrown
+the market closed early because of the heat
+a child drew a family portrait and gave it to dad
+the old clock on the wall stopped and nobody noticed
+they moved the couch to the other wall and the room felt new
+she took a photo of the meal before eating it
+he waved goodbye from the train window until she disappeared`;
+
+// ===== WebGPU Detection =====
+let hasWebGPU = false;
+(async () => {
+  try {
+    if (navigator.gpu) {
+      const adapter = await navigator.gpu.requestAdapter();
+      if (adapter) { hasWebGPU = true; }
+    }
+  } catch (e) {}
+  const el = document.getElementById('cfgGPU');
+  if (el) el.value = hasWebGPU ? 'available' : 'CPU (fine for this scale)';
+})();
+
+// ===== PRNG =====
+class SeededRandom {
+  constructor(seed) { this.state = seed; }
+  next() { this.state = (this.state * 1664525 + 1013904223) & 0xFFFFFFFF; return (this.state >>> 0) / 0xFFFFFFFF; }
+  gauss(mu = 0, sigma = 1) {
+    let u, v, s;
+    do { u = this.next() * 2 - 1; v = this.next() * 2 - 1; s = u*u + v*v; } while (s >= 1 || s === 0);
+    return mu + sigma * u * Math.sqrt(-2 * Math.log(s) / s);
+  }
+  shuffle(arr) { for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(this.next() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; } }
+  choices(pop, weights) {
+    let total = 0; for (let i = 0; i < weights.length; i++) total += weights[i];
+    let r = this.next() * total;
+    for (let i = 0; i < pop.length; i++) { r -= weights[i]; if (r <= 0) return pop[i]; }
+    return pop[pop.length - 1];
+  }
+}
+
+// ===== Autograd =====
+let _gen = 0;
+class Value {
+  constructor(data, children = [], local_grads = []) {
+    this.data = data; this.grad = 0;
+    this._c0 = children[0]; this._c1 = children[1];
+    this._lg0 = local_grads[0]; this._lg1 = local_grads[1];
+    this._nch = children.length; this._gen = 0;
+  }
+  add(other) {
+    if (other instanceof Value) return new Value(this.data + other.data, [this, other], [1, 1]);
+    return new Value(this.data + other, [this], [1]);
+  }
+  mul(other) {
+    if (other instanceof Value) return new Value(this.data * other.data, [this, other], [other.data, this.data]);
+    return new Value(this.data * other, [this], [other]);
+  }
+  pow(other) { return new Value(this.data ** other, [this], [other * this.data ** (other - 1)]); }
+  log() { return new Value(Math.log(this.data), [this], [1 / this.data]); }
+  exp() { const e = Math.exp(this.data); return new Value(e, [this], [e]); }
+  relu() { return new Value(Math.max(0, this.data), [this], [+(this.data > 0)]); }
+  neg() { return new Value(-this.data, [this], [-1]); }
+  sub(other) { return this.add(other instanceof Value ? other.neg() : -other); }
+  div(other) { return this.mul(other instanceof Value ? other.pow(-1) : 1 / other); }
+  backward() {
+    const gen = ++_gen; const topo = [];
+    function build_topo(v) {
+      if (v._gen === gen) return; v._gen = gen;
+      if (v._nch >= 1) build_topo(v._c0);
+      if (v._nch === 2) build_topo(v._c1);
+      topo.push(v);
+    }
+    build_topo(this); this.grad = 1;
+    for (let i = topo.length - 1; i >= 0; --i) {
+      const v = topo[i], g = v.grad;
+      if (v._nch >= 1) v._c0.grad += v._lg0 * g;
+      if (v._nch === 2) v._c1.grad += v._lg1 * g;
+    }
+  }
+}
+
+// ===== GPT Primitives =====
+const sum = (arr) => arr.reduce((a, b) => a.add(b));
+const zip = (a, b) => a.map((ai, i) => [ai, b[i]]);
+function linear(x, w) { return w.map(wo => sum(wo.map((wi, i) => wi.mul(x[i])))); }
+function softmax(logits) {
+  const max_val = Math.max(...logits.map(v => v.data));
+  const exps = logits.map(v => v.sub(max_val).exp());
+  const total = sum(exps);
+  return exps.map(e => e.div(total));
+}
+function rmsnorm(x) {
+  const ms = sum(x.map(xi => xi.mul(xi))).mul(1 / x.length);
+  const s = ms.add(1e-5).pow(-0.5);
+  return x.map(xi => xi.mul(s));
+}
+
+// ===== Plain Inference Engine (for pre-trained weights, no autograd) =====
+let _plainModel = null;
+let _plainVocab = null; // { tokenSet, token_to_id, BOS, vocab_size }
+
+async function loadNotorchBin(url) {
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`fetch ${url}: ${resp.status}`);
+  const buf = await resp.arrayBuffer();
+  const view = new DataView(buf);
+  let off = 0;
+  const magic = view.getUint32(off, true); off += 4;
+  if (magic !== 0x4E544F52) throw new Error('not a notorch file');
+  const nTensors = view.getInt32(off, true); off += 4;
+  const tensors = [];
+  for (let i = 0; i < nTensors; i++) {
+    const ndim = view.getInt32(off, true); off += 4;
+    const shape = [];
+    let len = 1;
+    for (let d = 0; d < ndim; d++) {
+      const s = view.getInt32(off, true); off += 4;
+      shape.push(s); len *= s;
+    }
+    const data = new Float32Array(buf.slice(off, off + len * 4));
+    off += len * 4;
+    tensors.push({ shape, data, len });
+  }
+  return tensors;
+}
+
+class PlainModel {
+  constructor(tensors, config) {
+    this.E = config.embd;
+    this.H = config.heads;
+    this.HD = Math.floor(config.embd / config.heads);
+    this.L = config.layers;
+    this.CTX = config.ctx;
+    this.Vp = config.vocab_size + 1;
+    this.FFN = 4 * config.embd;
+    let i = 0;
+    this.wte = tensors[i++]; this.wpe = tensors[i++];
+    this.layers = [];
+    for (let l = 0; l < this.L; l++) {
+      this.layers.push({
+        rms1: tensors[i++], wq: tensors[i++], wk: tensors[i++],
+        wv: tensors[i++], wo: tensors[i++], rms2: tensors[i++],
+        fc1: tensors[i++], fc2: tensors[i++],
+      });
+    }
+    this.rms_f = tensors[i++]; this.head = tensors[i++];
+    this.kvKeys = null; this.kvVals = null;
+  }
+
+  resetKV() {
+    this.kvKeys = Array.from({ length: this.L }, () => []);
+    this.kvVals = Array.from({ length: this.L }, () => []);
+  }
+
+  rmsnorm(x, gamma) {
+    const n = x.length;
+    let ss = 0;
+    for (let j = 0; j < n; j++) ss += x[j] * x[j];
+    const scale = 1.0 / Math.sqrt(ss / n + 1e-6);
+    const out = new Float32Array(n);
+    for (let j = 0; j < n; j++) out[j] = x[j] * scale * gamma.data[j];
+    return out;
+  }
+
+  matvec(w, x, nout, nin) {
+    const out = new Float32Array(nout);
+    for (let i = 0; i < nout; i++) {
+      let s = 0;
+      const base = i * nin;
+      for (let j = 0; j < nin; j++) s += w.data[base + j] * x[j];
+      out[i] = s;
+    }
+    return out;
+  }
+
+  forward(tokenId, posId) {
+    const E = this.E, H = this.H, HD = this.HD;
+    const x = new Float32Array(E);
+    for (let j = 0; j < E; j++)
+      x[j] = this.wte.data[tokenId * E + j] + this.wpe.data[posId * E + j];
+
+    for (let l = 0; l < this.L; l++) {
+      const ly = this.layers[l];
+      const xn = this.rmsnorm(x, ly.rms1);
+      const q = this.matvec(ly.wq, xn, E, E);
+      const k = this.matvec(ly.wk, xn, E, E);
+      const v = this.matvec(ly.wv, xn, E, E);
+      this.kvKeys[l].push(new Float32Array(k));
+      this.kvVals[l].push(new Float32Array(v));
+
+      const seqLen = this.kvKeys[l].length;
+      const attnOut = new Float32Array(E);
+      const sc = 1.0 / Math.sqrt(HD);
+      for (let h = 0; h < H; h++) {
+        const hs = h * HD;
+        const scores = new Float32Array(seqLen);
+        for (let t = 0; t < seqLen; t++) {
+          let dot = 0;
+          for (let j = 0; j < HD; j++) dot += q[hs + j] * this.kvKeys[l][t][hs + j];
+          scores[t] = dot * sc;
+        }
+        let mx = scores[0];
+        for (let t = 1; t < seqLen; t++) if (scores[t] > mx) mx = scores[t];
+        let sm = 0;
+        for (let t = 0; t < seqLen; t++) { scores[t] = Math.exp(scores[t] - mx); sm += scores[t]; }
+        for (let t = 0; t < seqLen; t++) scores[t] /= sm;
+        for (let j = 0; j < HD; j++) {
+          let val = 0;
+          for (let t = 0; t < seqLen; t++) val += scores[t] * this.kvVals[l][t][hs + j];
+          attnOut[hs + j] = val;
+        }
+      }
+
+      const proj = this.matvec(ly.wo, attnOut, E, E);
+      for (let j = 0; j < E; j++) x[j] += proj[j];
+
+      const xn2 = this.rmsnorm(x, ly.rms2);
+      const fc1 = this.matvec(ly.fc1, xn2, this.FFN, E);
+      for (let j = 0; j < this.FFN; j++) fc1[j] = fc1[j] / (1 + Math.exp(-fc1[j])); // SiLU
+      const fc2 = this.matvec(ly.fc2, fc1, E, this.FFN);
+      for (let j = 0; j < E; j++) x[j] += fc2[j];
+    }
+
+    const xf = this.rmsnorm(x, this.rms_f);
+    return this.matvec(this.head, xf, this.Vp, E);
+  }
+}
+
+function sampleTopP(logits, n, temp, topP) {
+  let mx = logits[0];
+  for (let i = 1; i < n; i++) if (logits[i] > mx) mx = logits[i];
+  const probs = new Float32Array(n);
+  let sm = 0;
+  for (let i = 0; i < n; i++) { probs[i] = Math.exp((logits[i] - mx) / temp); sm += probs[i]; }
+  for (let i = 0; i < n; i++) probs[i] /= sm;
+
+  const idx = Array.from({ length: n }, (_, i) => i);
+  idx.sort((a, b) => probs[b] - probs[a]);
+
+  let cum = 0, nucSz = 0;
+  for (let i = 0; i < n; i++) { cum += probs[idx[i]]; nucSz++; if (cum >= topP) break; }
+
+  let nucSum = 0;
+  for (let i = 0; i < nucSz; i++) nucSum += probs[idx[i]];
+
+  const r = Math.random();
+  let c = 0;
+  for (let i = 0; i < nucSz; i++) {
+    c += probs[idx[i]] / nucSum;
+    if (c >= r) return { id: idx[i], probs };
+  }
+  return { id: idx[0], probs };
+}
+
+async function tryLoadPreTrained() {
+  try {
+    const [configResp, vocabResp] = await Promise.all([
+      fetch('weights/cavellman_v3.bin.json'),
+      fetch('weights/cavellman_v3.bin.vocab'),
+    ]);
+    if (!configResp.ok || !vocabResp.ok) throw new Error('config/vocab not found');
+
+    const config = await configResp.json();
+    const vocabText = await vocabResp.text();
+    const lines = vocabText.trim().split('\n');
+    const vocabSize = parseInt(lines[0]);
+    const tokenSet = lines.slice(1, 1 + vocabSize);
+
+    $('trainStatusText').textContent = 'loading weights...';
+    $('trainDot').style.display = '';
+
+    const tensors = await loadNotorchBin('weights/cavellman_v3.bin');
+    _plainModel = new PlainModel(tensors, config);
+    _plainVocab = {
+      tokenSet,
+      token_to_id: new Map(tokenSet.map((t, i) => [t, i])),
+      BOS: vocabSize,
+      vocab_size: vocabSize + 1,
+    };
+
+    $('trainStatusText').textContent = `loaded — ${config.preset} (${(config.params/1000).toFixed(0)}K params, loss ${config.final_loss.toFixed(2)})`;
+    $('trainDot').style.display = 'none';
+    $('btnSpeak').disabled = false;
+    $('responseHint').textContent = 'Model loaded. Compose glyphs above and press Speak.';
+    $('trainDetails').removeAttribute('open');
+
+    log(`<span class="info">Pre-trained model loaded: ${config.preset} preset</span>`);
+    log(`<span class="info">  ${config.params.toLocaleString()} params, ${config.layers} layers, embd=${config.embd}, heads=${config.heads}</span>`);
+    log(`<span class="info">  training loss: ${config.final_loss.toFixed(4)}, vocab: ${vocabSize} glyphs</span>`);
+    log(`<span class="info">  Ready for inference. Use "Re-train" button to train a new model in browser.</span>`);
+
+    return true;
+  } catch (e) {
+    console.log('Pre-trained weights not available, will train in browser:', e.message);
+    return false;
+  }
+}
+
+// ===== UI Helpers =====
+const $ = id => document.getElementById(id);
+function glyphImg(name, size = 32) {
+  return `<img src="glyphs/${name}.svg" alt="${name}" title="${name}" width="${size}" height="${size}">`;
+}
 
 function renderAlphabet() {
-  const el = document.getElementById('alphabet');
   let html = '';
   for (const cat of CATEGORIES) {
     html += `<div class="cat-title">${cat.name} (${cat.glyphs.length})</div><div class="glyph-grid">`;
     for (const g of cat.glyphs) {
-      html += `<div class="glyph" onclick="addGlyph('${g}')"><img src="glyphs/${g}.svg" alt="${g}"><div class="name">${g}</div></div>`;
+      html += `<div class="glyph-cell">${glyphImg(g, 32)}<div class="gname">${g}</div></div>`;
     }
     html += '</div>';
   }
-  el.innerHTML += html;
+  $('alphabetGrid').innerHTML = html;
 }
 
-function addGlyph(name) {
-  story.push(name);
-  renderStory();
-}
-
-function undoGlyph() {
-  story.pop();
-  renderStory();
-}
-
-function clearStory() {
-  story = [];
-  renderStory();
-}
-
-function copyStory() {
-  navigator.clipboard.writeText(story.join(' '));
-}
-
-function renderStory() {
-  const el = document.getElementById('story');
-  if (story.length === 0) {
-    el.innerHTML = '<span style="color:#ccc">click glyphs to compose...</span>';
-    return;
+function renderKeyboard() {
+  let html = '';
+  for (const cat of CATEGORIES) {
+    html += `<div class="kb-cat-label">${cat.name}</div><div class="kb-grid">`;
+    for (const g of cat.glyphs) {
+      const cls = g === 'BE' ? 'kb-btn be-btn' : 'kb-btn';
+      html += `<button class="${cls}" onclick="addGlyph('${g}')" title="${g}">${glyphImg(g, 24)}<span class="kb-name">${g}</span></button>`;
+    }
+    html += '</div>';
   }
-  el.innerHTML = story.map(g =>
-    `<div class="token"><img src="glyphs/${g}.svg" alt="${g}"><div class="label">${g}</div></div>`
-  ).join('') + '<div class="cursor"></div>';
+  $('keyboard').innerHTML = html;
 }
 
-function renderExamples() {
-  const el = document.getElementById('examples');
-  el.innerHTML = EXAMPLES.map(ex =>
-    `<div class="example"><div class="glyphs">${ex.g.map(g => `<img src="glyphs/${g}.svg" title="${g}">`).join('')}</div><div class="text">${ex.g.join(' ')} — <em>${ex.t}</em></div></div>`
+function renderSuggestions() {
+  $('suggestions').innerHTML = EXAMPLES.map(ex =>
+    `<span class="suggestion" onclick="loadSuggestion('${ex}')">${ex}</span>`
   ).join('');
 }
 
-renderAlphabet();
-renderStory();
-renderExamples();
+// ===== Talk Input =====
+let talkInput = [];
+
+function addGlyph(name) {
+  talkInput.push(name);
+  renderInput();
+}
+
+function undoGlyph() {
+  talkInput.pop();
+  renderInput();
+}
+
+function clearInput() {
+  talkInput = [];
+  renderInput();
+}
+
+function loadSuggestion(text) {
+  talkInput = text.split(' ');
+  renderInput();
+}
+
+function renderInput() {
+  const el = $('inputDisplay');
+  if (talkInput.length === 0) {
+    el.innerHTML = '<span class="input-placeholder">click glyphs above to compose...</span>';
+    return;
+  }
+  el.innerHTML = talkInput.map(g =>
+    `<span class="tok">${glyphImg(g, 28)}<span class="label">${g}</span></span>`
+  ).join('') + '<span class="cursor"></span>';
+}
+
+// ===== Training =====
+let running = false, stopFlag = false;
+const lossHistory = [];
+let _trained = null;
+
+function log(html) {
+  const el = $('logOutput');
+  el.innerHTML += html + '\n';
+  el.scrollTop = el.scrollHeight;
+}
+
+function lossColor(v) { return v > 3 ? 'loss-bad' : v > 1.5 ? 'loss-ok' : 'loss-good'; }
+
+function drawLossChart() {
+  const canvas = $('lossCanvas');
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr; canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  const W = rect.width, H = rect.height;
+  ctx.clearRect(0, 0, W, H);
+  if (lossHistory.length < 2) return;
+  const minL = Math.min(...lossHistory), maxL = Math.max(...lossHistory);
+  const range = maxL - minL || 1;
+  const pad = { t: 10, b: 20, l: 40, r: 10 };
+  const pw = W - pad.l - pad.r, ph = H - pad.t - pad.b;
+  ctx.strokeStyle = '#1e1a15'; ctx.lineWidth = 0.5;
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.t + (ph * i / 4);
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
+    ctx.fillStyle = '#665'; ctx.font = '9px JetBrains Mono';
+    ctx.fillText((maxL - range * i / 4).toFixed(1), 2, y + 3);
+  }
+  const grad = ctx.createLinearGradient(0, pad.t, 0, H - pad.b);
+  grad.addColorStop(0, '#e74c3c'); grad.addColorStop(0.5, '#f39c12'); grad.addColorStop(1, '#c4944c');
+  ctx.strokeStyle = grad; ctx.lineWidth = 1.5; ctx.beginPath();
+  for (let i = 0; i < lossHistory.length; i++) {
+    const x = pad.l + (i / (lossHistory.length - 1)) * pw;
+    const y = pad.t + ((maxL - lossHistory[i]) / range) * ph;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+}
+
+async function startTraining() {
+  if (running) return;
+  running = true; stopFlag = false;
+  $('btnTrain').disabled = true;
+  $('btnStop').style.display = '';
+  $('btnSpeak').disabled = true;
+  $('logOutput').innerHTML = '';
+  $('samplesGrid').innerHTML = '';
+  $('trainDot').style.display = '';
+  lossHistory.length = 0;
+
+  const isDiffusion = $('cfgMode').value === 'diffusion';
+  const rng = new SeededRandom(42);
+  const n_embd = +$('cfgEmbd').value;
+  const n_head = +$('cfgHeads').value;
+  const n_layer = +$('cfgLayers').value;
+  const block_size = +$('cfgBlock').value;
+  const num_steps = +$('cfgSteps').value;
+  const learning_rate = +$('cfgLR').value;
+  const head_dim = Math.floor(n_embd / n_head);
+  const scale = 1 / head_dim ** 0.5;
+  const beta1 = 0.85, beta2 = 0.99, eps_adam = 1e-8;
+
+  // Read from textarea — any text goes through semantic tokenizer → 88 glyphs
+  const dataText = $('cfgData').value.trim();
+  if (!dataText) {
+    log('<span class="loss-bad">No training data. Paste text or select a dataset above.</span>');
+    running = false; $('btnTrain').disabled = false; $('btnStop').style.display = 'none';
+    return;
+  }
+
+  // Semantic tokenizer: any language → 88 glyph sequences
+  const st = new SemanticTokenizer();
+  const docs = st.tokenize(dataText);
+
+  if (docs.length === 0) {
+    log('<span class="loss-bad">No stories could be tokenized. Make sure text contains recognizable words.</span>');
+    running = false; $('btnTrain').disabled = false; $('btnStop').style.display = 'none';
+    return;
+  }
+
+  // Preview tokenization
+  const preview = docs.slice(0, 3).map(d => d.join(' ')).join('\n  ');
+  log(`<span class="info">Semantic tokenizer: ${dataText.split('\\n').filter(l=>l.trim()).length} lines → ${docs.length} glyph stories</span>`);
+  log(`<span class="info">Preview:\n  ${preview}</span>`);
+  rng.shuffle(docs);
+
+  // Fixed vocab: 88 glyphs + BOS + MASK (for diffusion)
+  const tokenSet = Object.keys(SEMANTIC_MAP).sort();
+  const token_to_id = new Map(tokenSet.map((t, i) => [t, i]));
+  const BOS = tokenSet.length;      // 88
+  const MASK_ID = tokenSet.length + 1;  // 89
+  const vocab_size = tokenSet.length + 2;  // 90 (88 glyphs + BOS + MASK)
+
+  log(`<span class="info">stories: ${docs.length}  vocab: ${vocab_size} (${tokenSet.length} glyphs + end)</span>`);
+  log(`<span class="info">embd: ${n_embd}  heads: ${n_head}  layers: ${n_layer}  block: ${block_size}</span>`);
+
+  const matrix = (nout, nin, std = 0.08) =>
+    Array.from({ length: nout }, () => Array.from({ length: nin }, () => new Value(rng.gauss(0, std))));
+
+  const state_dict = {
+    wte: matrix(vocab_size, n_embd), wpe: matrix(block_size, n_embd), lm_head: matrix(vocab_size, n_embd),
+  };
+  for (let i = 0; i < n_layer; i++) {
+    state_dict[`layer${i}.attn_wq`] = matrix(n_embd, n_embd);
+    state_dict[`layer${i}.attn_wk`] = matrix(n_embd, n_embd);
+    state_dict[`layer${i}.attn_wv`] = matrix(n_embd, n_embd);
+    state_dict[`layer${i}.attn_wo`] = matrix(n_embd, n_embd);
+    state_dict[`layer${i}.mlp_fc1`] = matrix(4 * n_embd, n_embd);
+    state_dict[`layer${i}.mlp_fc2`] = matrix(n_embd, 4 * n_embd);
+  }
+  const params = Object.values(state_dict).flat(Infinity);
+  log(`<span class="info">params: ${params.length.toLocaleString()}</span>`);
+  $('statParams').textContent = params.length.toLocaleString();
+  $('statVocab').textContent = vocab_size;
+  $('trainStatusText').textContent = 'training...';
+
+  const m_buf = new Float64Array(params.length);
+  const v_buf = new Float64Array(params.length);
+
+  function gpt(token_id, pos_id, keys, values) {
+    const tok_emb = state_dict['wte'][token_id];
+    const pos_emb = state_dict['wpe'][pos_id];
+    let x = zip(tok_emb, pos_emb).map(([t, p]) => t.add(p));
+    x = rmsnorm(x);
+    for (let li = 0; li < n_layer; li++) {
+      let x_residual = x; x = rmsnorm(x);
+      const q = linear(x, state_dict[`layer${li}.attn_wq`]);
+      const k = linear(x, state_dict[`layer${li}.attn_wk`]);
+      const v = linear(x, state_dict[`layer${li}.attn_wv`]);
+      keys[li].push(k); values[li].push(v);
+      const x_attn = [];
+      for (let h = 0; h < n_head; h++) {
+        const hs = h * head_dim;
+        const q_h = q.slice(hs, hs + head_dim);
+        const k_h = keys[li].map(ki => ki.slice(hs, hs + head_dim));
+        const v_h = values[li].map(vi => vi.slice(hs, hs + head_dim));
+        const attn_logits = k_h.map(kt => sum(zip(q_h, kt).map(([qi, ki]) => qi.mul(ki))).mul(scale));
+        const attn_weights = softmax(attn_logits);
+        for (let j = 0; j < head_dim; j++)
+          x_attn.push(sum(attn_weights.map((aw, t) => aw.mul(v_h[t][j]))));
+      }
+      x = linear(x_attn, state_dict[`layer${li}.attn_wo`]);
+      x = x.map((a, i) => a.add(x_residual[i]));
+      x_residual = x; x = rmsnorm(x);
+      x = linear(x, state_dict[`layer${li}.mlp_fc1`]);
+      x = x.map(xi => xi.relu());
+      x = linear(x, state_dict[`layer${li}.mlp_fc2`]);
+      x = x.map((a, i) => a.add(x_residual[i]));
+    }
+    return linear(x, state_dict['lm_head']);
+  }
+
+  // Training loop — supports both Autoregressive and Diffusion modes
+  const t0 = performance.now();
+  log(`<span class="info">mode: ${isDiffusion ? 'DIFFUSION (mask→unmask)' : 'AUTOREGRESSIVE (left→right)'}</span>`);
+
+  for (let step = 0; step < num_steps; step++) {
+    if (stopFlag) { log('<span class="info">stopped.</span>'); break; }
+    const doc = docs[step % docs.length];
+    const orig_tokens = doc.map(t => token_to_id.get(t)).filter(t => t !== undefined);
+    const n = Math.min(block_size, orig_tokens.length);
+    if (n < 2) continue;
+
+    const keys = Array.from({ length: n_layer }, () => []);
+    const values_kv = Array.from({ length: n_layer }, () => []);
+    const losses = [];
+
+    if (isDiffusion) {
+      // DIFFUSION: mask random positions, predict originals
+      const mask_ratio = 0.3 + rng.next() * 0.4; // 30-70% masked
+      const input_tokens = [...orig_tokens];
+      const mask_flags = new Array(n).fill(false);
+      for (let i = 0; i < n; i++) {
+        if (rng.next() < mask_ratio) {
+          input_tokens[i] = MASK_ID;
+          mask_flags[i] = true;
+        }
+      }
+      // Forward pass (causal — each position sees left context)
+      for (let pos = 0; pos < n; pos++) {
+        const logits = gpt(input_tokens[pos], pos, keys, values_kv);
+        if (mask_flags[pos]) {
+          const probs = softmax(logits);
+          losses.push(probs[orig_tokens[pos]].log().neg());
+        }
+      }
+    } else {
+      // AUTOREGRESSIVE: predict next token
+      const tokens = [BOS, ...orig_tokens, BOS];
+      const ar_n = Math.min(block_size, tokens.length - 1);
+      for (let pos = 0; pos < ar_n; pos++) {
+        const logits = gpt(tokens[pos], pos, keys, values_kv);
+        const probs = softmax(logits);
+        losses.push(probs[tokens[pos + 1]].log().neg());
+      }
+    }
+
+    if (losses.length === 0) continue;
+    const loss = sum(losses).mul(1 / losses.length);
+    loss.backward();
+    const lr_t = learning_rate * (1 - step / num_steps);
+    const bc1 = 1 - beta1 ** (step + 1), bc2 = 1 - beta2 ** (step + 1);
+    for (let i = 0; i < params.length; i++) {
+      const p = params[i];
+      m_buf[i] = beta1 * m_buf[i] + (1 - beta1) * p.grad;
+      v_buf[i] = beta2 * v_buf[i] + (1 - beta2) * p.grad ** 2;
+      p.data -= lr_t * (m_buf[i] / bc1) / (Math.sqrt(v_buf[i] / bc2) + eps_adam);
+      p.grad = 0;
+    }
+    lossHistory.push(loss.data);
+    $('statStep').textContent = `${step + 1}/${num_steps}`;
+    $('statLoss').textContent = loss.data.toFixed(3);
+    $('progressFill').style.width = ((step + 1) / num_steps * 100).toFixed(0) + '%';
+    const logInterval = Math.max(1, Math.floor(num_steps / 40));
+    if ((step + 1) % logInterval === 0 || step === 0 || step === num_steps - 1) {
+      const elapsed = ((performance.now() - t0) / 1000).toFixed(0);
+      log(`<span class="step">step ${String(step+1).padStart(5)}/${num_steps}</span>  loss <span class="${lossColor(loss.data)}">${loss.data.toFixed(4)}</span>  ${elapsed}s`);
+      drawLossChart();
+      $('trainStatusText').textContent = `training ${((step+1)/num_steps*100).toFixed(0)}%`;
+    }
+    if (step % 2 === 0) await new Promise(r => setTimeout(r, 0));
+  }
+
+  // Generate samples
+  if (!stopFlag || lossHistory.length > 10) {
+    log('<span class="info">\n--- sample stories ---</span>');
+    $('samplesGrid').innerHTML = '';
+    const token_ids = Array.from({ length: vocab_size }, (_, i) => i);
+    for (let si = 0; si < 6; si++) {
+      const keys = Array.from({ length: n_layer }, () => []);
+      const values_kv = Array.from({ length: n_layer }, () => []);
+      let tid = BOS; const sample = [];
+      for (let pos_id = 0; pos_id < block_size; pos_id++) {
+        const logits = gpt(tid, pos_id, keys, values_kv);
+        const probs = softmax(logits.map(l => l.div(+$('cfgTemp').value)));
+        tid = rng.choices(token_ids, probs.map(p => p.data));
+        if (tid === BOS) break;
+        sample.push(tokenSet[tid]);
+      }
+      const story = sample.join(' ');
+      log(`<span class="sample-line">  ${story}</span>`);
+      const tag = document.createElement('span');
+      tag.className = 'sample-tag'; tag.textContent = story;
+      $('samplesGrid').appendChild(tag);
+    }
+  }
+
+  drawLossChart();
+  const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
+  const finalLoss = lossHistory[lossHistory.length - 1];
+  log(`<span class="info">done in ${elapsed}s — final loss: ${finalLoss.toFixed(4)}</span>`);
+
+  _trained = { state_dict, tokenSet, token_to_id, BOS, MASK_ID, vocab_size, n_layer, block_size, rng, gpt, isDiffusion };
+
+  // Enable Talk
+  $('btnSpeak').disabled = false;
+  $('responseHint').textContent = 'Model ready. Compose glyphs above and press Speak.';
+  $('trainStatusText').textContent = `trained — loss ${finalLoss.toFixed(2)}`;
+  $('trainDot').style.display = 'none';
+
+  running = false;
+  $('btnTrain').disabled = false;
+  $('btnStop').style.display = 'none';
+}
+
+function stopTraining() { stopFlag = true; }
+
+// ===== Inference (Talk) =====
+let inferRunning = false;
+
+async function speak() {
+  if (inferRunning || talkInput.length === 0) return;
+  if (!_plainModel && !_trained) return;
+  inferRunning = true;
+  $('btnSpeak').disabled = true;
+
+  // Pick the right model
+  const usePlain = !!_plainModel;
+  const tokenSet = usePlain ? _plainVocab.tokenSet : _trained.tokenSet;
+  const token_to_id = usePlain ? _plainVocab.token_to_id : _trained.token_to_id;
+  const BOS = usePlain ? _plainVocab.BOS : _trained.BOS;
+  const vocab_size = usePlain ? _plainVocab.vocab_size : _trained.vocab_size;
+  const maxCtx = usePlain ? _plainModel.CTX : _trained.block_size;
+  const temperature = +$('cfgTemp').value;
+
+  const validPrompt = talkInput.filter(t => token_to_id.has(t));
+  if (validPrompt.length === 0) {
+    $('responseDisplay').innerHTML = '<span style="color:var(--text-dim)">No recognized glyphs. Try clicking glyphs from the keyboard.</span>';
+    inferRunning = false;
+    $('btnSpeak').disabled = false;
+    return;
+  }
+
+  const promptIds = [BOS, ...validPrompt.map(t => token_to_id.get(t))];
+  const display = $('responseDisplay');
+  display.innerHTML = '';
+
+  // Show prompt glyphs
+  for (const t of validPrompt) {
+    const sp = document.createElement('span');
+    sp.className = 'tok-prompt';
+    sp.innerHTML = `${glyphImg(t, 28)}<span class="label">${t}</span>`;
+    sp.style.display = 'inline-flex';
+    sp.style.flexDirection = 'column';
+    sp.style.alignItems = 'center';
+    sp.style.margin = '0 3px';
+    display.appendChild(sp);
+  }
+
+  const sep = document.createElement('span');
+  sep.style.cssText = 'display:inline-block;width:2px;height:32px;background:var(--border);margin:0 8px;vertical-align:middle;';
+  display.appendChild(sep);
+
+  const cursor = document.createElement('span');
+  cursor.className = 'tok-cursor';
+  display.appendChild(cursor);
+
+  $('probBars').style.display = 'block';
+  $('probContent').innerHTML = '<div style="color:var(--text-dim);font-size:0.7rem;">processing...</div>';
+  $('inferStepLabel').textContent = '';
+
+  await new Promise(r => setTimeout(r, 50));
+
+  if (usePlain) {
+    // ── Plain model inference (pre-trained weights, fast) ──
+    _plainModel.resetKV();
+    // Feed prompt
+    for (let i = 0; i < promptIds.length - 1; i++) {
+      _plainModel.forward(promptIds[i], i);
+    }
+    let lastId = promptIds[promptIds.length - 1];
+    let posId = promptIds.length - 1;
+    const maxGen = maxCtx - promptIds.length;
+    let genCount = 0;
+
+    for (let gi = 0; gi < maxGen; gi++) {
+      const logits = _plainModel.forward(lastId, posId);
+      const { id: nextId, probs: probData } = sampleTopP(logits, vocab_size, temperature, 0.9);
+
+      genCount++;
+      $('inferStepLabel').textContent = `step ${genCount}: model predicts next glyph`;
+      showProbBarsPlain(probData, tokenSet, BOS, nextId);
+      await new Promise(r => setTimeout(r, 200));
+
+      if (nextId === BOS) {
+        cursor.remove();
+        const endSp = document.createElement('span');
+        endSp.className = 'tok-end'; endSp.textContent = '(end)';
+        display.appendChild(endSp);
+        $('inferStepLabel').textContent = `the cave spoke ${genCount} glyphs`;
+        break;
+      }
+
+      cursor.remove();
+      const sp = document.createElement('span');
+      sp.className = 'tok-gen';
+      sp.innerHTML = `${glyphImg(tokenSet[nextId], 32)}<span class="label">${tokenSet[nextId]}</span>`;
+      display.appendChild(sp);
+      display.appendChild(cursor);
+
+      lastId = nextId;
+      posId++;
+      await new Promise(r => setTimeout(r, 150));
+    }
+  } else if (_trained && _trained.isDiffusion) {
+    // ── DIFFUSION inference: MASK → iterative unmasking ──
+    const { state_dict, n_layer, block_size, rng, gpt, MASK_ID: mID } = _trained;
+    const gen_len = Math.min(12, block_size);
+    const sequence = new Array(gen_len).fill(mID);
+
+    // Fill prompt positions
+    for (let i = 0; i < validPrompt.length && i < gen_len; i++) {
+      sequence[i] = token_to_id.get(validPrompt[i]);
+    }
+
+    cursor.remove();
+
+    // Render initial state (all MASK except prompt)
+    function renderDiffState(seq) {
+      display.innerHTML = '';
+      for (let i = 0; i < seq.length; i++) {
+        const sp = document.createElement('span');
+        if (seq[i] === mID) {
+          sp.className = 'tok-gen';
+          sp.innerHTML = '<span style="display:inline-block;width:32px;height:32px;border:2px dashed var(--border);border-radius:4px;opacity:0.3;"></span><span class="label">?</span>';
+          sp.style.display = 'inline-flex'; sp.style.flexDirection = 'column'; sp.style.alignItems = 'center'; sp.style.margin = '0 3px';
+        } else if (i < validPrompt.length) {
+          sp.className = 'tok-prompt';
+          sp.innerHTML = `${glyphImg(tokenSet[seq[i]], 28)}<span class="label">${tokenSet[seq[i]]}</span>`;
+          sp.style.display = 'inline-flex'; sp.style.flexDirection = 'column'; sp.style.alignItems = 'center'; sp.style.margin = '0 3px';
+        } else {
+          sp.className = 'tok-gen';
+          sp.innerHTML = `${glyphImg(tokenSet[seq[i]], 32)}<span class="label">${tokenSet[seq[i]]}</span>`;
+        }
+        display.appendChild(sp);
+      }
+    }
+
+    renderDiffState(sequence);
+    await new Promise(r => setTimeout(r, 500));
+
+    const T_STEPS = 6;
+    const unmasksPerStep = Math.ceil((gen_len - validPrompt.length) / T_STEPS);
+
+    for (let t = 0; t < T_STEPS; t++) {
+      // Count remaining masks
+      const masked_positions = [];
+      for (let i = 0; i < gen_len; i++) if (sequence[i] === mID) masked_positions.push(i);
+      if (masked_positions.length === 0) break;
+
+      // Forward pass on current sequence
+      const keys = Array.from({ length: n_layer }, () => []);
+      const values_kv = Array.from({ length: n_layer }, () => []);
+      const predictions = [];
+
+      for (let pos = 0; pos < gen_len; pos++) {
+        const logits = gpt(sequence[pos], pos, keys, values_kv);
+        if (sequence[pos] === mID) {
+          const probs = softmax(logits.map(l => l.div(temperature)));
+          const probData = probs.map(p => p.data);
+          // Find best non-special token
+          let bestId = 0, bestP = 0;
+          for (let j = 0; j < tokenSet.length; j++) {
+            if (probData[j] > bestP) { bestP = probData[j]; bestId = j; }
+          }
+          predictions.push({ pos, bestId, confidence: bestP, probData });
+        }
+      }
+
+      // Sort by confidence, unmask top K
+      predictions.sort((a, b) => b.confidence - a.confidence);
+      const toReveal = predictions.slice(0, unmasksPerStep);
+
+      $('inferStepLabel').textContent = `diffusion step ${t + 1}/${T_STEPS}: revealing ${toReveal.length} glyphs`;
+
+      if (toReveal.length > 0) {
+        showProbBars(toReveal[0].probData, tokenSet, BOS, toReveal[0].bestId);
+      }
+
+      for (const p of toReveal) {
+        sequence[p.pos] = p.bestId;
+      }
+
+      renderDiffState(sequence);
+      await new Promise(r => setTimeout(r, 700));
+    }
+
+    $('inferStepLabel').textContent = `the cave painting appeared in ${T_STEPS} steps`;
+
+  } else {
+    // ── AUTOREGRESSIVE inference (browser-trained) ──
+    const { state_dict, n_layer, block_size, rng, gpt } = _trained;
+    const token_ids = Array.from({ length: vocab_size }, (_, i) => i);
+    const keys = Array.from({ length: n_layer }, () => []);
+    const values_kv = Array.from({ length: n_layer }, () => []);
+    for (let i = 0; i < promptIds.length - 1; i++) {
+      gpt(promptIds[i], i, keys, values_kv);
+    }
+    let lastId = promptIds[promptIds.length - 1];
+    let posId = promptIds.length - 1;
+    const maxGen = block_size - promptIds.length;
+    let genCount = 0;
+
+    for (let gi = 0; gi < maxGen; gi++) {
+      const logits = gpt(lastId, posId, keys, values_kv);
+      const probs = softmax(logits.map(l => l.div(temperature)));
+      const probData = probs.map(p => p.data);
+      const nextId = rng.choices(token_ids, probData);
+
+      genCount++;
+      $('inferStepLabel').textContent = `step ${genCount}: model predicts next glyph`;
+      showProbBars(probData, tokenSet, BOS, nextId);
+      await new Promise(r => setTimeout(r, 400));
+
+      if (nextId === BOS) {
+        cursor.remove();
+        const endSp = document.createElement('span');
+        endSp.className = 'tok-end'; endSp.textContent = '(end)';
+        display.appendChild(endSp);
+        $('inferStepLabel').textContent = `the cave spoke ${genCount} glyphs`;
+        break;
+      }
+
+      cursor.remove();
+      const sp = document.createElement('span');
+      sp.className = 'tok-gen';
+      sp.innerHTML = `${glyphImg(tokenSet[nextId], 32)}<span class="label">${tokenSet[nextId]}</span>`;
+      display.appendChild(sp);
+      display.appendChild(cursor);
+
+      lastId = nextId;
+      posId++;
+      await new Promise(r => setTimeout(r, 250));
+    }
+  }
+
+  if (cursor.parentNode) {
+    cursor.remove();
+    $('inferStepLabel').textContent += ' (max length)';
+  }
+
+  inferRunning = false;
+  $('btnSpeak').disabled = false;
+}
+
+function showProbBarsPlain(probData, tokenSet, BOS, chosenId) {
+  const indexed = Array.from(probData).map((p, i) => ({ p, i }));
+  indexed.sort((a, b) => b.p - a.p);
+  const top = indexed.slice(0, 7);
+  if (!top.find(t => t.i === chosenId)) { top.pop(); top.push(indexed.find(t => t.i === chosenId)); }
+
+  const el = $('probContent');
+  el.innerHTML = '';
+  const LOG_MIN = 1e-6;
+  const logVals = top.map(t => Math.log10(Math.max(t.p, LOG_MIN)));
+  const logMax = Math.max(...logVals);
+  const logMin = Math.min(...logVals, logMax - 4);
+
+  for (const t of top) {
+    const label = t.i === BOS ? '(end)' : tokenSet[t.i];
+    const imgHtml = t.i === BOS ? '' : glyphImg(label, 16);
+    const pct = t.p >= 0.01 ? (t.p * 100).toFixed(1) + '%' : t.p >= 0.0001 ? (t.p * 100).toFixed(3) + '%' : '<0.01%';
+    const logV = Math.log10(Math.max(t.p, LOG_MIN));
+    const barW = Math.max(1, ((logV - logMin) / (logMax - logMin) * 100)).toFixed(1);
+    const isChosen = t.i === chosenId;
+    const hue = t.i === BOS ? '0' : `${(t.i * 47) % 360}`;
+    const fillColor = isChosen ? 'var(--accent)' : `hsl(${hue}, 45%, 45%)`;
+
+    const row = document.createElement('div');
+    row.className = 'prob-row' + (isChosen ? ' prob-chosen' : '');
+    row.innerHTML = `
+      <div class="prob-token">${imgHtml}<span style="font-size:0.6rem">${label}</span></div>
+      <div class="prob-track"><div class="prob-fill" style="width:${barW}%;background:${fillColor};"></div></div>
+      <div class="prob-pct">${pct}</div>
+      ${isChosen ? '<span style="font-size:0.55rem;color:var(--accent);margin-left:0.2rem;">sampled</span>' : ''}
+    `;
+    el.appendChild(row);
+  }
+}
+
+function showProbBars(probData, tokenSet, BOS, chosenId) {
+  const indexed = probData.map((p, i) => ({ p, i }));
+  indexed.sort((a, b) => b.p - a.p);
+  const top = indexed.slice(0, 7);
+  if (!top.find(t => t.i === chosenId)) {
+    top.pop();
+    top.push(indexed.find(t => t.i === chosenId));
+  }
+
+  const el = $('probContent');
+  el.innerHTML = '';
+  const LOG_MIN = 1e-6;
+  const logVals = top.map(t => Math.log10(Math.max(t.p, LOG_MIN)));
+  const logMax = Math.max(...logVals);
+  const logMin = Math.min(...logVals, logMax - 4);
+
+  for (const t of top) {
+    const label = t.i === BOS ? '(end)' : tokenSet[t.i];
+    const imgHtml = t.i === BOS ? '' : glyphImg(label, 16);
+    const pct = t.p >= 0.01 ? (t.p * 100).toFixed(1) + '%' : t.p >= 0.0001 ? (t.p * 100).toFixed(3) + '%' : '<0.01%';
+    const logV = Math.log10(Math.max(t.p, LOG_MIN));
+    const barW = Math.max(1, ((logV - logMin) / (logMax - logMin) * 100)).toFixed(1);
+    const isChosen = t.i === chosenId;
+    const hue = t.i === BOS ? '0' : `${(t.i * 47) % 360}`;
+    const fillColor = isChosen ? 'var(--accent)' : `hsl(${hue}, 45%, 45%)`;
+
+    const row = document.createElement('div');
+    row.className = 'prob-row' + (isChosen ? ' prob-chosen' : '');
+    row.innerHTML = `
+      <div class="prob-token">${imgHtml}<span style="font-size:0.6rem">${label}</span></div>
+      <div class="prob-track"><div class="prob-fill" style="width:${barW}%;background:${fillColor};"></div></div>
+      <div class="prob-pct">${pct}</div>
+      ${isChosen ? '<span style="font-size:0.55rem;color:var(--accent);margin-left:0.2rem;">sampled</span>' : ''}
+    `;
+    el.appendChild(row);
+  }
+}
+
+// Enter key to speak
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.ctrlKey && !e.shiftKey && talkInput.length > 0 && !inferRunning) {
+    speak();
+  }
+});
+
+// ===== Dataset Switch =====
+function switchDataset(mode) {
+  const ta = $('cfgData');
+  if (mode === 'glyphs') {
+    ta.value = TRAINING_DATA;
+    $('datasetInfo').textContent = TRAINING_DATA.trim().split('\n').length + ' stories, 88 glyph tokens';
+  } else if (mode === 'custom') {
+    ta.value = '';
+    ta.placeholder = 'Paste any text — one story per line. Or drop a .txt file below.';
+    $('datasetInfo').textContent = 'paste or upload';
+  }
+}
+
+// ===== File Upload & Data =====
+function handleFileDrop(e) {
+  const file = e.dataTransfer.files[0];
+  if (file) readFile(file);
+}
+function handleFileSelect(e) {
+  const file = e.target.files[0];
+  if (file) readFile(file);
+}
+function readFile(file) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    $('cfgData').value = e.target.result.trim();
+    log(`<span class="info">Loaded ${file.name} — ${$('cfgData').value.split('\\n').filter(l=>l.trim()).length} stories</span>`);
+  };
+  reader.readAsText(file, 'utf-8');
+}
+function loadSampleData() {
+  $('cfgData').value = TRAINING_DATA;
+  log(`<span class="info">Sample data loaded — ${TRAINING_DATA.trim().split('\\n').length} stories</span>`);
+}
+
+// ===== Init =====
+async function initApp() {
+  renderAlphabet();
+  renderKeyboard();
+  renderSuggestions();
+  renderInput();
+
+  // Try loading pre-trained weights
+  const loaded = await tryLoadPreTrained();
+  if (!loaded) {
+    $('trainStatusText').textContent = 'no pre-trained weights — use Training Engine below';
+    $('responseHint').textContent = 'Train a model first (open Training Engine below), or serve from a web server to load pre-trained weights.';
+    $('trainDetails').setAttribute('open', '');
+  }
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initApp);
+} else {
+  initApp();
+}
 </script>
 </body>
 </html>

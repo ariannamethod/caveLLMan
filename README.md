@@ -1,25 +1,26 @@
 # caveLLMan
 
-### 88 hieroglyphs. one super-verb. the grammar of being alive.
+### 88 hieroglyphs. any text. any language.
 
-*30,000 years ago, humans drew 32 recurring signs across 146 cave sites on four continents. We added 56 more for the 21st century — and taught a transformer to speak them.*
+*30,000 years ago, humans drew 32 recurring signs across 146 cave sites on four continents. We added 56 more for the 21st century — and built a transformer that compresses any text into them.*
 
 ---
 
 ## What is this?
 
-caveLLMan is a GPT that communicates through abstract hieroglyphs — not emoji, not words, but semantic atoms. Each symbol is a concept so fundamental that a cave painter and a software engineer would both recognize it.
-
-The model learns which atoms follow which. Light follows dark. Grief follows love. Creation follows destruction. **BE** turns any noun into a verb: `BE fear` = to fear. `BE love` = to love. `BE fire` = to burn. One symbol that doubles the expressiveness of the entire language.
+caveLLMan is a language-agnostic transformer that compresses any text into 88 hieroglyphic concepts. Feed it Dracula, Hebrew poetry, news articles, or code documentation — the **semantic tokenizer** maps every word to one of 88 universal symbols, and the model learns patterns in this compressed space.
 
 ```
-me BE change and choose good now
-never lie and always speak and know
-old woman remember and give child know
-other man speak and me not agree
+"the sun rose and the birds started singing"  →  light tree and animal before music
+"Count Dracula stood in the dark castle"      →  dark stone and wait man
+"she wrote code all night and found the bug"  →  woman AI dark and make light
 ```
 
-No Python. No pip. No torch. Pure C, built on [notorch](https://github.com/ariannamethod/notorch).
+Two inference modes:
+- **Diffusion** — the cave painting appears all at once (MASK → iterative unmasking)
+- **Autoregressive** — glyphs emerge left to right, token by token
+
+No Python. No pip. No torch. C engine built on [notorch](https://github.com/ariannamethod/notorch). Browser engine runs entirely in your browser.
 
 ---
 
@@ -154,67 +155,87 @@ No Python. No pip. No torch. Pure C, built on [notorch](https://github.com/arian
 
 ---
 
-## How to read caveLLMan
+## How it works
 
-Each story is a sequence of glyphs. You read them like a sentence:
+### 1. Semantic Tokenizer
 
-```
-me BE fear dark not see path
-↓   ↓   ↓    ↓    ↓   ↓   ↓
-I  am  afraid dark can't see the way
-```
+Any English text is compressed into 88 concepts. Each word maps to the nearest hieroglyph through a 2000+ word synonym map with morphological fallbacks:
 
 ```
-woman give child food and love
-↓      ↓    ↓     ↓    ↓   ↓
-a woman gives a child food and love
+"the old dog stretched by the fireplace and fell asleep"
+  → before animal fire and sleep
+
+"she started a new company and worked on it day and night"
+  → woman other work dark
 ```
 
-```
-old man remember before and BE grief
-↓   ↓      ↓       ↓     ↓  ↓   ↓
-an old man remembers the past and grieves
-```
+### 2. Transformer
 
-## BE — The Super-Verb
+A GPT-class transformer learns patterns in the compressed glyph space. Two training modes:
 
-One circle. The most powerful symbol in the alphabet. **BE** turns any noun into a verb, any concept into a lived state:
+- **Diffusion** (recommended) — randomly masks positions, trains bidirectional prediction. At inference, starts from all-MASK and iteratively reveals glyphs by confidence. The cave painting appears all at once.
+- **Autoregressive** — standard left-to-right next-token prediction.
 
-| caveLLMan | meaning |
-|-----------|---------|
-| me **BE** fear | I am afraid |
-| woman **BE** love man | a woman loves a man |
-| child **BE** joy | the child is happy |
-| spirit **BE** light | the spirit is luminous |
-| AI **BE** know much | the AI knows a lot |
-| me **BE** free | I am free |
-| person **BE** death | a person dies |
-| fire **BE** change | fire transforms |
+### 3. BE — The Super-Verb
 
-Without BE, these are nouns: fear, love, joy. With BE, they become experience. A cave painter 30,000 years ago would draw a circle around a figure to mean "this is happening." We kept the tradition.
+One circle. **BE** turns any noun into a verb: `BE fear` = to be afraid. `BE love` = to love. `BE fire` = to burn. One symbol that doubles the expressiveness of the entire language.
 
 ---
 
 ## Quick Start
 
+### Browser (no install)
+
+Open `index.html` in a browser. Paste any English text, select Diffusion or Autoregressive mode, press Train. Click glyphs to talk to the model.
+
+On a web server (or GitHub Pages), pre-trained weights load automatically from `weights/`.
+
+### C Engine (notorch)
+
 ```bash
 make                    # build with BLAS acceleration
 make cpu                # build without BLAS (portable)
 
+# Train autoregressive
 ./train_emolm --dataset data/cavellman_train_final.txt --preset small --steps 15000
+
+# Train diffusion
+./train_diffusion --dataset data/cavellman_train_final.txt --steps 15000
+
+# Interactive inference
 ./infer_emolm --weights weights/cavellman_v3.bin --preset small
 ```
 
-## What the model generates
+### Tests
+
+```bash
+node tests/test_semantic_tokenizer.js
+```
+
+---
+
+## Architecture
 
 ```
-me BE change and choose good now        — I am changing and choosing good now
-child question and know                 — a child asks and learns
-other woman help and give food child    — another woman helps and feeds a child
-never lie and always speak and know     — never lie, always speak and know
-me BE anger cause you lie               — I am angry because you lied
-spirit BE light not body not pain       — spirit is light, no body, no pain
-man woman bond love home child          — man and woman bond in love, home, children
+┌─────────────────┐     ┌────────────────────┐     ┌──────────────────┐
+│  Any English     │────▶│ Semantic Tokenizer  │────▶│  88 Glyph IDs    │
+│  text            │     │ 2060 words → 88     │     │  (fixed vocab)   │
+└─────────────────┘     └────────────────────┘     └──────────────────┘
+                                                           │
+                              ┌─────────────────────────────┘
+                              ▼
+                   ┌─────────────────────┐
+                   │  Transformer         │
+                   │  Diffusion or AR     │
+                   │  Browser: JS autograd│
+                   │  Native: C + notorch │
+                   └─────────────────────┘
+                              │
+                              ▼
+                   ┌─────────────────────┐
+                   │  88 SVG Hieroglyphs  │
+                   │  Cave painting       │
+                   └─────────────────────┘
 ```
 
 ## Numbers
@@ -222,20 +243,13 @@ man woman bond love home child          — man and woman bond in love, home, ch
 | Metric | Value |
 |--------|-------|
 | Alphabet | 88 hieroglyphs |
-| Training data | 15,500 stories |
-| Model (small) | ~500K params |
-| Training loss | 4.49 → 1.66 |
-| Training speed | 20 steps/s on Mac |
+| Semantic map | 2060 English words |
+| Browser model | ~31K params (default) |
+| C model (small) | 472K params |
+| Training loss (C) | 4.49 → 1.66 |
 | Engine | notorch (pure C, BLAS) |
-
-## Why 88?
-
-Genevieve von Petzinger found 32 recurring geometric signs in European cave art spanning 30,000 years. That's enough to be human.
-
-We added 56 more to be a human in the 21st century: internet, AI, money, stress, free, work, choose. Plus a super-verb that the cave painters already knew — BE.
-
-88 symbols. Any story. Any language. Any century.
+| Diffusion steps | 30 (C) / 6 (browser) |
 
 ## Credits
 
-Originally inspired by [emojiGPT](https://github.com/MattWenJun/emojiGPT) by @MattWenJun. Rebuilt from scratch: 88-glyph alphabet designed with 6 AI linguists, cave-painting SVG hieroglyphs, C engine on [notorch](https://github.com/ariannamethod/notorch), BE super-verb — by [Arianna Method](https://github.com/ariannamethod).
+88-glyph alphabet inspired by Genevieve von Petzinger's 32 cave signs. Originally forked from [emojiGPT](https://github.com/MattWenJun/emojiGPT) by @MattWenJun. Rebuilt from scratch: semantic tokenizer, diffusion engine, cave-painting SVG hieroglyphs, C engine on [notorch](https://github.com/ariannamethod/notorch) — by [Arianna Method](https://github.com/ariannamethod).
