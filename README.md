@@ -176,7 +176,19 @@ A GPT-class transformer learns patterns in the compressed glyph space. Two train
 - **Diffusion** (recommended) — randomly masks positions, trains bidirectional prediction. At inference, starts from all-MASK and iteratively reveals glyphs by confidence. The cave painting appears all at once.
 - **Autoregressive** — standard left-to-right next-token prediction.
 
-### 3. BE — The Super-Verb
+### 3. Hebbian Plasticity
+
+The cave learns from every conversation. No backprop — low-rank Hebbian LoRA adapters on Q and V projections update after each generation. Neurons that fire together wire together.
+
+### 4. Symbol Emergence
+
+When two glyphs appear together often enough (co-occurrence > 0.85), the model proposes a new combined symbol. One new sign per 100 interactions — disciplined, like language evolution under pressure. The cave painter invents new signs when the old ones aren't enough.
+
+### 5. Async Self-Learning
+
+A background thread watches the `feed/` directory. Drop any `.txt` file there — the model devours it through the semantic tokenizer and updates its Hebbian weights autonomously. No button press, no human in the loop. The cave reads while you sleep.
+
+### 6. BE — The Super-Verb
 
 One circle. **BE** turns any noun into a verb: `BE fear` = to be afraid. `BE love` = to love. `BE fire` = to burn. One symbol that doubles the expressiveness of the entire language.
 
@@ -184,32 +196,49 @@ One circle. **BE** turns any noun into a verb: `BE fear` = to be afraid. `BE lov
 
 ## Quick Start
 
-### Browser (no install)
-
-Open `index.html` in a browser. Paste any English text, select Diffusion or Autoregressive mode, press Train. Click glyphs to talk to the model.
-
-On a web server (or GitHub Pages), pre-trained weights load automatically from `weights/`.
-
-### C Engine (notorch)
+### cavellman.c — the living engine
 
 ```bash
-make                    # build with BLAS acceleration
-make cpu                # build without BLAS (portable)
+make cavellman                     # build with BLAS + pthreads
 
-# Train autoregressive
+./cavellman --weights weights/cavellman_v3.bin --preset small
+```
+
+```
+══════════════════════════════════════════════════════════
+  caveLLMan — self-evolving hieroglyphic language model
+══════════════════════════════════════════════════════════
+  hebbian: rank=8, lr=0.0010
+  emergence: threshold=0.85, window=100
+  [learner] watching feed/ for .txt files
+
+▸ light fire water
+  cave: me light after always
+
+▸ ?              — list all glyphs (base + emerged)
+▸ stats          — co-occurrence, emergence status
+▸ save           — save Hebbian state
+▸ quit           — save and exit
+```
+
+Drop `.txt` files into `feed/` — the cave devours them in the background.
+
+### Browser (no install)
+
+Open `index.html`. Click glyphs to speak. `?` = help, `⚙` = training engine.
+
+### Training (notorch C)
+
+```bash
+make                               # build all
 ./train_emolm --dataset data/cavellman_train_final.txt --preset small --steps 15000
-
-# Train diffusion
 ./train_diffusion --dataset data/cavellman_train_final.txt --steps 15000
-
-# Interactive inference
-./infer_emolm --weights weights/cavellman_v3.bin --preset small
 ```
 
 ### Tests
 
 ```bash
-node tests/test_semantic_tokenizer.js
+node tests/test_semantic_tokenizer.js    # 35 tests
 ```
 
 ---
@@ -217,39 +246,47 @@ node tests/test_semantic_tokenizer.js
 ## Architecture
 
 ```
-┌─────────────────┐     ┌────────────────────┐     ┌──────────────────┐
-│  Any English     │────▶│ Semantic Tokenizer  │────▶│  88 Glyph IDs    │
-│  text            │     │ 2060 words → 88     │     │  (fixed vocab)   │
-└─────────────────┘     └────────────────────┘     └──────────────────┘
-                                                           │
-                              ┌─────────────────────────────┘
-                              ▼
-                   ┌─────────────────────┐
-                   │  Transformer         │
-                   │  Diffusion or AR     │
-                   │  Browser: JS autograd│
-                   │  Native: C + notorch │
-                   └─────────────────────┘
-                              │
-                              ▼
-                   ┌─────────────────────┐
-                   │  88 SVG Hieroglyphs  │
-                   │  Cave painting       │
-                   └─────────────────────┘
+                    ┌──────────────┐
+                    │  feed/*.txt  │ ← drop any text here
+                    └──────┬───────┘
+                           │ async thread
+┌─────────────────┐        ▼
+│  Any English     │──▶ Semantic Tokenizer ──▶ 88 Glyph IDs
+│  text            │    2060 words → 88       (fixed vocab)
+└─────────────────┘                                │
+                                                   ▼
+                              ┌──────────────────────────────┐
+                              │  Transformer + Hebbian LoRA   │
+                              │  rank=8 on Q,V projections    │
+                              │  learns from every response   │
+                              ├──────────────────────────────┤
+                              │  Co-occurrence matrix          │
+                              │  → symbol emergence (>0.85)    │
+                              │  → 1 new glyph / 100 talks    │
+                              └──────────────────────────────┘
+                                           │
+                                           ▼
+                              ┌──────────────────────┐
+                              │  88+ SVG Hieroglyphs  │
+                              │  base + emerged signs  │
+                              └──────────────────────┘
 ```
 
 ## Numbers
 
 | Metric | Value |
 |--------|-------|
-| Alphabet | 88 hieroglyphs |
+| Base alphabet | 88 hieroglyphs |
+| Max emerged | 64 new symbols |
 | Semantic map | 2060 English words |
-| Browser model | ~31K params (default) |
+| Hebbian rank | 8 (LoRA on Q, V) |
+| Emergence threshold | 0.85 co-occurrence |
+| Discipline window | 100 interactions |
 | C model (small) | 472K params |
-| Training loss (C) | 4.49 → 1.66 |
-| Engine | notorch (pure C, BLAS) |
-| Diffusion steps | 30 (C) / 6 (browser) |
+| Browser model | ~31K params |
+| Engine | [notorch](https://github.com/ariannamethod/notorch) (pure C, BLAS) |
+| State file | `weights/cavellman.state` |
 
 ## Credits
 
-88-glyph alphabet inspired by Genevieve von Petzinger's 32 cave signs. Originally forked from [emojiGPT](https://github.com/MattWenJun/emojiGPT) by @MattWenJun. Rebuilt from scratch: semantic tokenizer, diffusion engine, cave-painting SVG hieroglyphs, C engine on [notorch](https://github.com/ariannamethod/notorch) — by [Arianna Method](https://github.com/ariannamethod).
+88-glyph alphabet inspired by Genevieve von Petzinger's 32 cave signs. Originally forked from [emojiGPT](https://github.com/MattWenJun/emojiGPT) by @MattWenJun. Rebuilt from scratch: semantic tokenizer, Hebbian plasticity, symbol emergence, async self-learning, diffusion engine, cave-painting SVG hieroglyphs, C engine on [notorch](https://github.com/ariannamethod/notorch) — by [Arianna Method](https://github.com/ariannamethod).

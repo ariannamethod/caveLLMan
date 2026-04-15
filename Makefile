@@ -59,6 +59,11 @@ infer_emolm: infer_emolm.c ariannamethod/notorch.c ariannamethod/notorch.h
 	$(CC) $(CFLAGS) $(BLAS_FLAGS) -Iariannamethod -o infer_emolm infer_emolm.c ariannamethod/notorch.c -lm
 	@echo "Compiled: infer_emolm (CPU + $(BLAS_NAME))"
 
+# caveLLMan — self-evolving inference with Hebbian plasticity
+cavellman: cavellman.c ariannamethod/notorch.c ariannamethod/notorch.h
+	$(CC) $(CFLAGS) $(BLAS_FLAGS) -Iariannamethod -o cavellman cavellman.c ariannamethod/notorch.c -lm -lpthread
+	@echo "Compiled: cavellman (Hebbian + async learner + $(BLAS_NAME))"
+
 # CPU without BLAS (portable fallback) — builds both binaries
 cpu: train_emolm.c infer_emolm.c notorch.c notorch.h
 	$(CC) $(CFLAGS) -o train_emolm train_emolm.c notorch.c -lm
