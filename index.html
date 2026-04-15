@@ -3,402 +3,276 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>caveLLMan — 88 Hieroglyphs</title>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Space+Grotesk:wght@400;600;700&display=swap" rel="stylesheet">
+<title>caveLLMan</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;700;800&display=swap" rel="stylesheet">
 <style>
 :root {
-  --bg: #0d0b09;
-  --surface: #17140f;
-  --surface2: #201c16;
-  --border: #33291b;
-  --text: #dcd5ca;
-  --text-dim: #897f70;
+  --bg: #0a0908;
+  --fg: #c8c0b4;
+  --dim: #4a4238;
   --accent: #c4944c;
-  --accent-dim: rgba(196, 148, 76, 0.15);
   --accent2: #e67e22;
-  --loss-high: #e74c3c;
-  --loss-mid: #f39c12;
-  --loss-low: #27ae60;
+  --border: #1e1a14;
+  --surface: #12100c;
   --mono: 'JetBrains Mono', monospace;
-  --sans: 'Space Grotesk', sans-serif;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: var(--bg); color: var(--text); font-family: var(--mono); min-height: 100vh; }
-.grain {
-  position: fixed; inset: 0; z-index: 9999; pointer-events: none; opacity: 0.025;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--mono);
+  height: 100vh; display: flex; flex-direction: column; overflow: hidden;
 }
 
-/* ── Header ── */
-header {
-  padding: 1.5rem 2rem 1rem; border-bottom: 1px solid var(--border);
-  display: flex; align-items: baseline; gap: 1.5rem; flex-wrap: wrap;
+/* ── GLYPH BAR (top) ── */
+#glyph-bar {
+  display: flex; flex-wrap: wrap; gap: 1px; padding: 8px 12px;
+  border-bottom: 1px solid var(--border); background: var(--surface);
+  max-height: 120px; overflow-y: auto;
 }
-header h1 { font-family: var(--sans); font-size: 1.6rem; font-weight: 700; color: var(--accent); letter-spacing: -0.03em; }
-header .tag { font-size: 0.7rem; color: var(--text-dim); background: var(--surface2); padding: 0.25rem 0.6rem; border-radius: 3px; border: 1px solid var(--border); }
-.train-status { margin-left: auto; font-size: 0.7rem; color: var(--text-dim); display: flex; align-items: center; gap: 0.4rem; }
-.train-status .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: pulse 1.2s infinite; }
+#glyph-bar button {
+  width: 36px; height: 36px; border: 1px solid transparent; background: none;
+  border-radius: 3px; cursor: pointer; padding: 4px; transition: all 0.12s;
+  position: relative;
+}
+#glyph-bar button:hover { border-color: var(--accent); background: rgba(196,148,76,0.1); }
+#glyph-bar button img { width: 100%; height: 100%; filter: invert(0.75); }
+#glyph-bar button.be-glyph img { filter: invert(0.75) sepia(1) hue-rotate(-10deg) saturate(3); }
+#glyph-bar button .tip {
+  display: none; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
+  background: #1a1714; color: var(--accent); font-size: 8px; padding: 2px 6px;
+  border-radius: 2px; white-space: nowrap; pointer-events: none; z-index: 10;
+}
+#glyph-bar button:hover .tip { display: block; }
+
+/* ── ARENA (center) ── */
+#arena {
+  flex: 1; display: flex; flex-direction: column; justify-content: center;
+  align-items: center; padding: 40px 60px; position: relative; overflow-y: auto;
+}
+#title {
+  position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+  font-size: 14px; font-weight: 800; letter-spacing: 10px; text-transform: uppercase;
+  color: var(--accent); user-select: none; opacity: 0.4;
+}
+
+/* conversation area */
+#conversation {
+  max-width: 720px; width: 100%; min-height: 200px; display: flex;
+  flex-direction: column; gap: 20px; padding-bottom: 20px;
+}
+.msg { display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-end; }
+.msg-you { justify-content: flex-end; }
+.msg-cave { justify-content: flex-start; }
+.msg .glyph-tok {
+  display: flex; flex-direction: column; align-items: center;
+  animation: glyphIn 0.25s ease-out;
+}
+.msg-you .glyph-tok img { width: 28px; height: 28px; filter: invert(0.5); opacity: 0.7; }
+.msg-cave .glyph-tok img { width: 36px; height: 36px; filter: invert(0.85); }
+.msg-cave .glyph-tok.mask-tok {
+  width: 36px; height: 36px; border: 2px dashed var(--dim); border-radius: 4px; opacity: 0.3;
+}
+.msg-label {
+  width: 100%; font-size: 8px; letter-spacing: 3px; text-transform: uppercase;
+  color: var(--dim); margin-bottom: 2px;
+}
+@keyframes glyphIn { 0% { opacity: 0; transform: scale(0.5); } 100% { opacity: 1; transform: scale(1); } }
+
+#placeholder-msg {
+  color: var(--dim); font-size: 11px; letter-spacing: 1px; text-align: center;
+  padding: 60px 0; line-height: 2;
+}
+
+/* ── COMPOSE BAR (bottom input) ── */
+#compose-bar {
+  display: flex; align-items: center; padding: 0 24px; height: 64px;
+  border-top: 1px solid var(--border); background: #08080a; flex-shrink: 0; gap: 8px;
+}
+#compose-display {
+  flex: 1; display: flex; gap: 4px; align-items: center; min-height: 40px;
+  padding: 4px 0; overflow-x: auto;
+}
+#compose-display .tok img { width: 24px; height: 24px; filter: invert(0.8); }
+#compose-display .empty { color: var(--dim); font-size: 10px; letter-spacing: 1px; }
+#compose-bar button {
+  font-family: var(--mono); font-size: 11px; background: none; border: 1px solid var(--border);
+  color: var(--dim); padding: 6px 12px; border-radius: 3px; cursor: pointer; transition: all 0.12s;
+}
+#compose-bar button:hover { border-color: var(--fg); color: var(--fg); }
+#compose-bar #btn-send {
+  background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 700;
+}
+#compose-bar #btn-send:hover { filter: brightness(1.15); }
+#compose-bar #btn-send:disabled { opacity: 0.3; cursor: default; filter: none; }
+
+/* ── STATUS BAR ── */
+#status-bar {
+  height: 24px; display: flex; align-items: center; padding: 0 24px;
+  font-size: 9px; letter-spacing: 1px; color: var(--dim);
+  border-top: 1px solid var(--border); gap: 16px; flex-shrink: 0;
+}
+#status-bar .val { color: var(--fg); font-weight: 700; }
+#status-bar .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); animation: pulse 1.5s infinite; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
 
-/* ── Article ── */
-.article {
-  max-width: 768px; margin: 0 auto; padding: 2rem 2rem 1rem;
-  font-family: var(--sans); line-height: 1.8; font-size: 0.95rem; color: var(--text);
+/* ── HELP OVERLAY ── */
+#help-overlay {
+  position: fixed; inset: 0; background: rgba(10,9,8,0.97); z-index: 100;
+  display: none; overflow-y: auto; padding: 40px 60px;
 }
-.article h2 { color: var(--accent); margin-top: 2rem; margin-bottom: 0.75rem; font-size: 1.3rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; }
-.article p { margin-bottom: 1rem; color: #b0a898; }
-.article .highlight {
-  background: var(--surface2); padding: 1rem 1.2rem; border-left: 3px solid var(--accent);
-  margin: 1rem 0; font-family: var(--mono); font-size: 0.85rem; color: var(--text); line-height: 1.9;
+#help-overlay.visible { display: block; }
+#help-overlay h1 {
+  font-size: 13px; font-weight: 800; letter-spacing: 8px; text-transform: uppercase;
+  color: var(--accent); margin-bottom: 30px;
 }
-.article .be-accent { color: var(--accent2); font-weight: 700; }
+#help-overlay h2 { font-size: 11px; color: var(--accent); letter-spacing: 4px; text-transform: uppercase; margin: 24px 0 12px; }
+#help-overlay p { font-size: 11px; line-height: 1.9; color: var(--fg); max-width: 640px; margin-bottom: 12px; }
+#help-overlay .eq { font-size: 11px; color: #fff; background: #14120e; padding: 12px 16px; margin: 12px 0; border-left: 3px solid var(--accent); }
+#help-overlay .glyph-ref { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+#help-overlay .glyph-ref .item { display: flex; align-items: center; gap: 4px; font-size: 9px; color: var(--dim); }
+#help-overlay .glyph-ref .item img { width: 20px; height: 20px; filter: invert(0.7); }
+#help-overlay .close-hint { position: fixed; top: 20px; right: 20px; font-size: 9px; color: var(--dim); letter-spacing: 2px; }
+#help-overlay .back-btn {
+  display: inline-block; margin-bottom: 20px; font-size: 10px; font-family: var(--mono);
+  color: var(--accent); background: none; border: 1px solid var(--accent);
+  padding: 5px 14px; border-radius: 3px; cursor: pointer; letter-spacing: 1px;
+}
+#help-overlay .back-btn:hover { background: var(--accent); color: var(--bg); }
 
-/* ── Alphabet ── */
-.alphabet { max-width: 960px; margin: 1rem auto 2rem; padding: 0 2rem; }
-.alphabet h2 { text-align: center; color: var(--accent); font-family: var(--sans); margin-bottom: 1.5rem; }
-.cat-title {
-  font-weight: 600; font-size: 0.7rem; color: var(--accent); text-transform: uppercase;
-  letter-spacing: 0.08em; border-bottom: 1px solid var(--border);
-  padding-bottom: 0.3rem; margin-top: 1.2rem; margin-bottom: 0.6rem;
+/* ── TRAIN OVERLAY ── */
+#train-overlay {
+  position: fixed; inset: 0; background: rgba(10,9,8,0.97); z-index: 100;
+  display: none; overflow-y: auto; padding: 40px 60px;
 }
-.glyph-grid { display: flex; flex-wrap: wrap; gap: 4px; }
-.glyph-cell {
-  width: 68px; text-align: center; padding: 6px 2px; border-radius: 4px;
-  transition: background 0.15s; cursor: default;
+#train-overlay.visible { display: block; }
+#train-overlay h1 { font-size: 13px; font-weight: 800; letter-spacing: 8px; text-transform: uppercase; color: var(--accent); margin-bottom: 20px; }
+#train-overlay .config-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; max-width: 600px; margin-bottom: 12px; }
+#train-overlay label { font-size: 8px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.05em; }
+#train-overlay input, #train-overlay select, #train-overlay textarea {
+  background: var(--bg); border: 1px solid var(--border); color: var(--fg);
+  font-family: var(--mono); font-size: 11px; padding: 5px 8px; border-radius: 3px; outline: none; width: 100%;
 }
-.glyph-cell:hover { background: var(--surface2); }
-.glyph-cell img { width: 32px; height: 32px; filter: invert(0.85); }
-.glyph-cell .gname { font-size: 0.55rem; color: var(--text-dim); margin-top: 2px; font-family: var(--mono); }
-
-/* ── Talk Section ── */
-.talk-section { max-width: 960px; margin: 0 auto; padding: 0 2rem 2rem; }
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
-.card-head {
-  padding: 0.75rem 1rem; border-bottom: 1px solid var(--border);
-  font-family: var(--sans); font-weight: 600; font-size: 0.85rem;
-  color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.08em;
-  display: flex; align-items: center; gap: 0.5rem;
+#train-overlay textarea { min-height: 120px; resize: vertical; line-height: 1.6; }
+#train-overlay input:focus, #train-overlay textarea:focus { border-color: var(--accent); }
+#train-overlay .close-hint { position: fixed; top: 20px; right: 20px; font-size: 9px; color: var(--dim); letter-spacing: 2px; }
+#train-overlay .btn { font-family: var(--mono); font-size: 11px; padding: 6px 16px; border-radius: 3px; cursor: pointer; border: 1px solid var(--border); background: none; color: var(--fg); }
+#train-overlay .btn:hover { border-color: var(--accent); color: var(--accent); }
+#train-overlay .btn-go { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 700; }
+#train-overlay .btn-go:hover { filter: brightness(1.15); }
+#train-log { font-size: 9px; color: var(--dim); max-height: 200px; overflow-y: auto; white-space: pre-wrap; margin-top: 12px; background: var(--bg); padding: 8px; border-radius: 3px; border: 1px solid var(--border); }
+#train-log .loss-good { color: #27ae60; }
+#train-log .loss-ok { color: #f39c12; }
+#train-log .loss-bad { color: #e74c3c; }
+#train-log .info { color: #6688bb; }
+#lossCanvas { width: 100%; max-width: 600px; height: 120px; display: block; margin-top: 8px; }
+.progress-bar { height: 3px; background: var(--bg); border-radius: 2px; overflow: hidden; max-width: 600px; margin-top: 8px; }
+.progress-fill { height: 100%; background: var(--accent); width: 0%; transition: width 0.1s; }
+.upload-zone {
+  border: 2px dashed var(--border); border-radius: 4px; padding: 12px; text-align: center;
+  cursor: pointer; color: var(--dim); font-size: 10px; margin: 8px 0; max-width: 600px;
 }
-.card-head .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: pulse 2s infinite; }
-.card-body { padding: 1rem; }
-
-.kb-section { margin-bottom: 1rem; }
-.kb-cat-label { font-size: 0.6rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.3rem; margin-top: 0.6rem; }
-.kb-grid { display: flex; flex-wrap: wrap; gap: 3px; }
-.kb-btn {
-  display: flex; flex-direction: column; align-items: center; gap: 1px;
-  padding: 4px 5px; border: 1px solid var(--border); background: var(--bg);
-  border-radius: 4px; cursor: pointer; transition: all 0.15s; min-width: 52px;
-}
-.kb-btn:hover { border-color: var(--accent); background: var(--accent-dim); transform: scale(1.05); }
-.kb-btn img { width: 24px; height: 24px; filter: invert(0.85); }
-.kb-btn .kb-name { font-size: 0.5rem; color: var(--text-dim); font-family: var(--mono); }
-.kb-btn.be-btn { border-color: var(--accent2); }
-.kb-btn.be-btn:hover { background: rgba(230, 126, 34, 0.15); }
-
-.input-display {
-  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
-  padding: 0.8rem; min-height: 56px; display: flex; flex-wrap: wrap; gap: 6px;
-  align-items: center; margin-bottom: 0.75rem;
-}
-.input-display .tok { display: flex; flex-direction: column; align-items: center; }
-.input-display .tok img { width: 28px; height: 28px; filter: invert(0.85); }
-.input-display .tok .label { font-size: 0.5rem; color: var(--text-dim); }
-.input-display .cursor {
-  width: 2px; height: 36px; background: var(--accent);
-  animation: blink 0.8s step-end infinite;
-}
-@keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
-.input-placeholder { color: var(--text-dim); font-size: 0.8rem; }
-
-.controls { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
-.btn {
-  font-family: var(--mono); font-size: 0.8rem; font-weight: 500;
-  padding: 0.5rem 1.2rem; border: 1px solid var(--border); border-radius: 4px;
-  cursor: pointer; transition: all 0.15s; background: var(--bg); color: var(--text);
-}
-.btn:hover { border-color: var(--accent); color: var(--accent); }
-.btn-primary { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 700; }
-.btn-primary:hover { filter: brightness(1.15); color: var(--bg); }
-.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; filter: none; }
-
-.suggestions { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 1rem; }
-.suggestion {
-  font-size: 0.7rem; padding: 0.3rem 0.6rem; background: var(--surface2);
-  border: 1px solid var(--border); border-radius: 3px; cursor: pointer;
-  color: var(--text-dim); transition: all 0.15s;
-}
-.suggestion:hover { border-color: var(--accent); color: var(--accent); }
-
-.response-display {
-  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
-  padding: 1rem; min-height: 60px; font-size: 1rem; line-height: 1.8;
-}
-.response-display .tok-prompt { opacity: 0.5; }
-.response-display .tok-gen {
-  animation: tokenPop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
-  display: inline-flex; flex-direction: column; align-items: center; margin: 0 3px;
-}
-.response-display .tok-gen img { width: 32px; height: 32px; filter: invert(0.85); }
-.response-display .tok-gen .label { font-size: 0.5rem; color: var(--accent); }
-.response-display .tok-prompt img { width: 28px; height: 28px; filter: invert(0.5); }
-.response-display .tok-prompt .label { font-size: 0.5rem; color: var(--text-dim); }
-.response-display .tok-cursor {
-  display: inline-block; width: 2px; height: 1.2em; background: var(--accent);
-  vertical-align: text-bottom; margin-left: 1px;
-  animation: blink 0.8s step-end infinite;
-}
-.response-display .tok-end { opacity: 0.4; font-size: 0.8rem; color: var(--text-dim); margin-left: 4px; }
-@keyframes tokenPop { 0% { opacity: 0; transform: scale(0.3) translateY(8px); } 100% { opacity: 1; transform: none; } }
-
-.prob-bar-container { margin-top: 1rem; }
-.prob-bar-title { font-size: 0.65rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 0.4rem; }
-.prob-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem; font-size: 0.75rem; height: 1.6rem; }
-.prob-token { width: 5rem; text-align: right; display: flex; align-items: center; justify-content: flex-end; gap: 0.3rem; }
-.prob-token img { width: 16px; height: 16px; filter: invert(0.7); }
-.prob-track { flex: 1; height: 6px; background: var(--surface2); border-radius: 3px; overflow: hidden; }
-.prob-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
-.prob-pct { width: 3.5rem; text-align: right; font-size: 0.65rem; color: var(--text-dim); }
-.prob-chosen .prob-token { color: var(--accent); font-weight: 700; }
-.prob-chosen .prob-fill { background: var(--accent) !important; }
-.prob-chosen .prob-pct { color: var(--accent); font-weight: 700; }
-.infer-step-label { font-size: 0.65rem; color: var(--text-dim); margin-top: 0.5rem; text-align: center; }
-
-/* ── Training Section ── */
-.train-section { max-width: 960px; margin: 0 auto; padding: 0 2rem 2rem; }
-details summary {
-  font-family: var(--sans); font-weight: 600; font-size: 0.9rem; color: var(--accent);
-  cursor: pointer; padding: 0.75rem 0; list-style: none;
-}
-details summary::-webkit-details-marker { display: none; }
-details summary::before { content: '▸ '; }
-details[open] summary::before { content: '▾ '; }
-
-.config-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.6rem; margin-bottom: 1rem; }
-.config-item { display: flex; flex-direction: column; gap: 0.2rem; }
-.config-item label { font-size: 0.6rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
-.config-item input {
-  background: var(--bg); border: 1px solid var(--border); color: var(--text);
-  font-family: var(--mono); font-size: 0.8rem; padding: 0.35rem 0.5rem;
-  border-radius: 3px; outline: none; transition: border-color 0.2s;
-}
-.config-item input:focus { border-color: var(--accent); }
-.config-full { grid-column: 1 / -1; }
-
-.stats-row { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
-.stat { flex: 1; min-width: 70px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 0.4rem 0.6rem; text-align: center; }
-.stat-val { font-size: 1.1rem; font-weight: 700; color: var(--accent); }
-.stat-label { font-size: 0.55rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 0.1rem; }
-
-.progress-bar { height: 3px; background: var(--bg); border-radius: 2px; overflow: hidden; margin-bottom: 0.75rem; }
-.progress-fill { height: 100%; background: var(--accent); width: 0%; transition: width 0.1s; border-radius: 2px; }
-
-#lossCanvas { width: 100%; height: 160px; display: block; margin-bottom: 0.75rem; }
-
-#logOutput {
-  background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
-  padding: 0.6rem; font-size: 0.65rem; line-height: 1.5;
-  max-height: 180px; overflow-y: auto; color: var(--text-dim); white-space: pre-wrap;
-}
-#logOutput .loss-good { color: var(--loss-low); }
-#logOutput .loss-ok { color: var(--loss-mid); }
-#logOutput .loss-bad { color: var(--loss-high); }
-#logOutput .sample-line { color: var(--accent); }
-#logOutput .info { color: #6688bb; }
-
-.samples-grid { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.5rem; }
-.sample-tag {
-  background: var(--accent-dim); border: 1px solid rgba(196,148,76,0.25);
-  color: var(--accent); font-size: 0.75rem; padding: 0.3rem 0.6rem;
-  border-radius: 3px; animation: fadeIn 0.3s ease;
-}
-@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
-
-/* ── Footer ── */
-footer {
-  max-width: 960px; margin: 2rem auto 0; padding: 2rem; border-top: 1px solid var(--border);
-  text-align: center; font-size: 0.75rem; color: var(--text-dim); line-height: 2;
-}
-footer a { color: var(--accent); text-decoration: none; }
-footer a:hover { text-decoration: underline; }
+.upload-zone:hover { border-color: var(--accent); color: var(--fg); }
+.upload-zone input { display: none; }
 
 @media (max-width: 640px) {
-  .config-grid { grid-template-columns: 1fr 1fr; }
-  header { padding: 1rem; }
-  .article, .alphabet, .talk-section, .train-section { padding-left: 1rem; padding-right: 1rem; }
-  .glyph-cell { width: 56px; }
-  .glyph-cell img { width: 26px; height: 26px; }
-  .kb-btn { min-width: 44px; }
+  #arena { padding: 20px; }
+  #glyph-bar button { width: 30px; height: 30px; }
+  #compose-bar { padding: 0 12px; }
+  #help-overlay, #train-overlay { padding: 20px; }
+  #train-overlay .config-grid { grid-template-columns: 1fr 1fr; }
 }
 </style>
 </head>
 <body>
-<div class="grain"></div>
 
-<header>
-  <h1>caveLLMan</h1>
-  <span class="tag">88 hieroglyphs · one super-verb · the grammar of being alive</span>
-  <div class="train-status" id="trainStatus">
-    <span class="dot" id="trainDot" style="display:none"></span>
-    <span id="trainStatusText"></span>
+<!-- GLYPH BAR -->
+<div id="glyph-bar"></div>
+
+<!-- ARENA -->
+<div id="arena">
+  <div id="title">caveLLMan</div>
+  <div id="conversation">
+    <div id="placeholder-msg">
+      click glyphs above to speak<br>
+      <span style="font-size:9px;opacity:0.5;">? = help &nbsp; ⚙ = train</span>
+    </div>
   </div>
-</header>
+</div>
 
-<!-- ===== EDUCATIONAL ARTICLE ===== -->
-<div class="article">
+<!-- COMPOSE BAR -->
+<div id="compose-bar">
+  <button onclick="showHelp()" title="help" style="font-size:14px;border:none;color:var(--dim);">?</button>
+  <div id="compose-display"><span class="empty">click glyphs to speak</span></div>
+  <button onclick="undoGlyph()">←</button>
+  <button onclick="clearInput()">×</button>
+  <button id="btn-send" onclick="speak()" disabled>▶</button>
+  <button onclick="showTrain()" title="train" style="font-size:12px;border:none;color:var(--dim);">⚙</button>
+</div>
+
+<!-- STATUS BAR -->
+<div id="status-bar">
+  <span id="statusDot" class="dot" style="display:none"></span>
+  <span id="statusText">loading...</span>
+  <span style="margin-left:auto">88 glyphs</span>
+</div>
+
+<!-- HELP OVERLAY -->
+<div id="help-overlay">
+  <span class="close-hint">ESC to close</span>
+  <button class="back-btn" onclick="hideHelp()">← back</button>
+  <h1>caveLLMan</h1>
+
   <h2>The 32 Signs</h2>
-  <p>In 2016, paleoanthropologist Genevieve von Petzinger documented exactly 32 recurring geometric signs across 146 European cave sites spanning 30,000 years. Lines, chevrons, circles, spirals, zigzags, hands — the same symbols appearing from France to Indonesia to Australia. Not random. Not decoration. A shared cognitive vocabulary predating all known writing by 25,000 years.</p>
-  <p>caveLLMan extends this vocabulary to 88 symbols — adding what a cave painter of the 21st century needs: <em>internet, AI, money, stress, freedom</em>. Plus one super-verb the ancients already knew.</p>
+  <p>In 2016, paleoanthropologist Genevieve von Petzinger documented 32 recurring geometric signs across 146 cave sites spanning 30,000 years. Lines, chevrons, circles, spirals — the same symbols from France to Indonesia. Not decoration. A shared cognitive vocabulary predating writing by 25,000 years.</p>
+  <p>caveLLMan extends this to 88 symbols — adding what a cave painter of the 21st century needs: internet, AI, money, stress, freedom.</p>
 
   <h2>BE — The Super-Verb</h2>
-  <p>One circle. The most powerful symbol in the alphabet. <span class="be-accent">BE</span> turns any noun into a verb, any concept into a lived state:</p>
-  <div class="highlight">
-    <span class="be-accent">BE</span> + fear = to be afraid<br>
-    <span class="be-accent">BE</span> + love = to love<br>
-    <span class="be-accent">BE</span> + fire = to burn<br>
-    <span class="be-accent">BE</span> + free = to be free<br>
-    <span class="be-accent">BE</span> + death = to die
-  </div>
-  <p>Without BE, these are nouns. With BE, they become experience. A cave painter 30,000 years ago would draw a circle around a figure to mean "this is happening." We kept the tradition.</p>
+  <p>One circle. Turns any noun into a verb:</p>
+  <div class="eq">BE + fear = to be afraid<br>BE + love = to love<br>BE + fire = to burn<br>BE + free = to be free</div>
 
   <h2>How to Read</h2>
-  <p>Each story is a sequence of glyphs read left to right:</p>
-  <div class="highlight">
-    me <span class="be-accent">BE</span> fear dark not see path<br>
-    → I am afraid of the dark, I cannot see the way<br><br>
-    woman give child food and love<br>
-    → a woman gives a child food and love<br><br>
-    never lie and always speak and know<br>
-    → never lie, always speak truthfully and learn
-  </div>
-</div>
+  <div class="eq">me BE fear dark not see path<br>→ I am afraid of the dark, I cannot see the way</div>
+  <div class="eq">woman give child food and love<br>→ a woman gives a child food and love</div>
 
-<!-- ===== THE 88 HIEROGLYPHS ===== -->
-<div class="alphabet">
   <h2>The 88 Hieroglyphs</h2>
-  <div id="alphabetGrid"></div>
+  <div id="help-glyph-ref"></div>
 </div>
 
-<!-- ===== SPEAK IN HIEROGLYPHS ===== -->
-<div class="talk-section">
-  <div class="card">
-    <div class="card-head"><span class="dot" id="talkDot"></span> Speak in Hieroglyphs</div>
-    <div class="card-body">
-      <div class="suggestions" id="suggestions"></div>
-      <div id="keyboard"></div>
-      <div class="input-display" id="inputDisplay">
-        <span class="input-placeholder">click glyphs above to compose...</span>
-      </div>
-      <div class="controls">
-        <button class="btn" onclick="undoGlyph()">← Undo</button>
-        <button class="btn" onclick="clearInput()">Clear</button>
-        <button class="btn btn-primary" id="btnSpeak" onclick="speak()" disabled>Speak ▶</button>
-      </div>
-      <div class="response-display" id="responseDisplay">
-        <span style="color:var(--text-dim);font-size:0.8rem;" id="responseHint">The model is training... it will respond once ready.</span>
-      </div>
-      <div class="prob-bar-container" id="probBars" style="display:none;">
-        <div class="prob-bar-title">Prediction — Top Token Probabilities</div>
-        <div id="probContent"></div>
-        <div class="infer-step-label" id="inferStepLabel"></div>
-      </div>
-    </div>
+<!-- TRAIN OVERLAY -->
+<div id="train-overlay">
+  <span class="close-hint">ESC to close</span>
+  <button class="back-btn" onclick="hideTrain()">← back</button>
+  <h1>Training Engine</h1>
+  <p style="font-size:10px;color:var(--dim);margin-bottom:16px;">
+    Paste any text. The semantic tokenizer compresses it to 88 glyphs. The model learns patterns.
+  </p>
+  <div class="config-grid">
+    <div><label>Embedding</label><input id="cfgEmbd" type="number" value="32" min="8" max="128" step="4"></div>
+    <div><label>Heads</label><input id="cfgHeads" type="number" value="4" min="1" max="16"></div>
+    <div><label>Layers</label><input id="cfgLayers" type="number" value="2" min="1" max="6"></div>
+    <div><label>Block size</label><input id="cfgBlock" type="number" value="32" min="8" max="64"></div>
+    <div><label>Steps</label><input id="cfgSteps" type="number" value="3000" min="100" max="20000" step="100"></div>
+    <div><label>LR</label><input id="cfgLR" type="number" value="0.01" min="0.001" max="0.1" step="0.001"></div>
+    <div><label>Temperature</label><input id="cfgTemp" type="number" value="0.7" min="0.1" max="2.0" step="0.1"></div>
+    <div><label>Mode</label><select id="cfgMode"><option value="diffusion">Diffusion</option><option value="autoregressive">Autoregressive</option></select></div>
   </div>
+  <div><label style="font-size:8px;color:var(--dim);text-transform:uppercase;">Training data</label></div>
+  <textarea id="cfgData" placeholder="Paste any text — one sentence per line. English, Hebrew, anything."></textarea>
+  <div class="upload-zone" onclick="document.getElementById('fileInput').click()"
+       ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
+       ondragleave="this.style.borderColor='var(--border)'"
+       ondrop="event.preventDefault();this.style.borderColor='var(--border)';handleFileDrop(event)">
+    <input type="file" id="fileInput" accept=".txt" onchange="handleFileSelect(event)">
+    Drop .txt or click to browse
+  </div>
+  <div style="display:flex;gap:8px;margin-top:8px;">
+    <button class="btn btn-go" id="btnTrain" onclick="startTraining()">▶ Train</button>
+    <button class="btn" id="btnStop" onclick="stopTraining()" style="display:none;color:#e74c3c;">■ Stop</button>
+    <button class="btn" onclick="loadSampleData()">Load sample</button>
+  </div>
+  <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+  <canvas id="lossCanvas"></canvas>
+  <div id="train-log"></div>
 </div>
-
-<!-- ===== TRAINING (collapsible) ===== -->
-<div class="train-section">
-  <details id="trainDetails" open>
-    <summary>Training Engine</summary>
-    <div class="card" style="margin-top:0.5rem;">
-      <div class="card-body">
-        <div class="config-grid">
-          <div class="config-item">
-            <label>Embedding dim</label>
-            <input id="cfgEmbd" type="number" value="32" min="8" max="128" step="4">
-          </div>
-          <div class="config-item">
-            <label>Attention heads</label>
-            <input id="cfgHeads" type="number" value="4" min="1" max="16">
-          </div>
-          <div class="config-item">
-            <label>Layers</label>
-            <input id="cfgLayers" type="number" value="2" min="1" max="6">
-          </div>
-          <div class="config-item">
-            <label>Block size</label>
-            <input id="cfgBlock" type="number" value="32" min="8" max="64">
-          </div>
-          <div class="config-item">
-            <label>Train steps</label>
-            <input id="cfgSteps" type="number" value="3000" min="100" max="20000" step="100">
-          </div>
-          <div class="config-item">
-            <label>Learning rate</label>
-            <input id="cfgLR" type="number" value="0.01" min="0.001" max="0.1" step="0.001">
-          </div>
-          <div class="config-item">
-            <label>Temperature</label>
-            <input id="cfgTemp" type="number" value="0.7" min="0.1" max="2.0" step="0.1">
-          </div>
-          <div class="config-item">
-            <label>Mode</label>
-            <select id="cfgMode" style="font-family:var(--mono);font-size:0.75rem;padding:0.35rem 0.5rem;background:var(--bg);border:1px solid var(--border);color:var(--accent);border-radius:3px;outline:none;cursor:pointer;">
-              <option value="diffusion">Diffusion (recommended)</option>
-              <option value="autoregressive">Autoregressive</option>
-            </select>
-          </div>
-          <div class="config-item config-full" style="margin-top:0.5rem;">
-            <label>Dataset</label>
-            <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
-              <select id="datasetSelect" onchange="switchDataset(this.value)" style="font-family:var(--mono);font-size:0.75rem;padding:0.35rem 0.5rem;background:var(--bg);border:1px solid var(--border);color:var(--accent);border-radius:3px;outline:none;cursor:pointer;">
-                <option value="glyphs">88 Hieroglyphs</option>
-                <option value="english">English sample</option>
-                <option value="hebrew">Hebrew sample</option>
-                <option value="custom">Custom (paste or upload)</option>
-              </select>
-              <span id="datasetInfo" style="font-size:0.6rem;color:var(--text-dim);"></span>
-            </div>
-          </div>
-          <div class="config-item config-full">
-            <label>Training data — one story per line (tokens auto-detected: space-split for words, char-split for CJK)</label>
-            <textarea id="cfgData" rows="6" style="background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:0.75rem;padding:0.5rem;border-radius:3px;outline:none;resize:vertical;min-height:100px;line-height:1.6;" placeholder="Paste any text — one story per line. The engine learns patterns from whatever you give it."></textarea>
-            <span style="font-size:0.55rem;color:var(--text-dim);margin-top:0.2rem;">Language-agnostic. Feed it Dracula, Hebrew poetry, emoji stories, or hieroglyphs — it learns.</span>
-          </div>
-          <div class="config-full" id="uploadZone" style="border:2px dashed var(--border);border-radius:6px;padding:1rem;text-align:center;cursor:pointer;transition:all 0.2s;color:var(--text-dim);font-size:0.75rem;margin-top:0.5rem;"
-               onclick="document.getElementById('fileInput').click()"
-               ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
-               ondragleave="this.style.borderColor='var(--border)'"
-               ondrop="event.preventDefault();this.style.borderColor='var(--border)';handleFileDrop(event)">
-            <input type="file" id="fileInput" accept=".txt" style="display:none" onchange="handleFileSelect(event)">
-            Drop a <strong>.txt</strong> file here, or click to browse
-          </div>
-          <div class="config-full" style="display:flex;gap:0.5rem;margin-top:0.5rem;">
-            <button id="btnTrain" class="btn btn-primary" onclick="startTraining()" style="margin-top:0">▶ Train</button>
-            <button id="btnStop" class="btn" onclick="stopTraining()" style="display:none;margin-top:0;color:var(--loss-high);border-color:var(--loss-high);">■ Stop</button>
-            <button class="btn" onclick="loadSampleData()" style="margin-top:0">Load sample data</button>
-          </div>
-        </div>
-        <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
-        <div class="stats-row">
-          <div class="stat"><div class="stat-val" id="statStep">—</div><div class="stat-label">Step</div></div>
-          <div class="stat"><div class="stat-val" id="statLoss">—</div><div class="stat-label">Loss</div></div>
-          <div class="stat"><div class="stat-val" id="statParams">—</div><div class="stat-label">Params</div></div>
-          <div class="stat"><div class="stat-val" id="statVocab">89</div><div class="stat-label">Vocab</div></div>
-        </div>
-        <canvas id="lossCanvas"></canvas>
-        <div id="logOutput">Select a dataset and press Train, or load pre-trained weights.</div>
-        <div class="samples-grid" id="samplesGrid"></div>
-      </div>
-    </div>
-  </details>
-</div>
-
-<footer>
-  <p>88 symbols. any story. any language. any century.</p>
-  <p>built on <a href="https://github.com/ariannamethod/notorch">notorch</a> · by <a href="https://github.com/ariannamethod">arianna method</a></p>
-  <p style="margin-top:0.5rem;font-size:0.65rem;">originally inspired by <a href="https://github.com/MattWenJun/emojiGPT">emojiGPT</a> by @MattWenJun</p>
-</footer>
 
 <script src="semantic_tokenizer.js"></script>
 <script>
@@ -415,202 +289,483 @@ const CATEGORIES = [
   {name:"TIME", glyphs:["before","now","after","never","always"]},
   {name:"GRAMMAR", glyphs:["not","many","much","and","one","question","how","cause"]},
   {name:"EXTENDED", glyphs:["me","you","other","money","change","write","choose","help","have","free","death","music","good"]},
-  {name:"SCALE + SUPER", glyphs:["small","same","BE","wait"]},
+  {name:"SUPER", glyphs:["small","same","BE","wait"]},
 ];
 
-const EXAMPLES = [
-  "me BE fear dark",
-  "woman give child food",
-  "never lie and always speak",
-  "spirit BE light not body",
-  "me BE change and choose good now",
-  "old man remember before",
-];
+const ALL_GLYPHS = CATEGORIES.flatMap(c => c.glyphs);
 
-const TRAINING_DATA_GLYPHS = `light person go outside see tree sky
-dark cold person fire food sleep dream
-child see animal give food love joy
-man woman home child food love joy
-person work money stress tired home sleep
-old person tree water think remember speak
-child hear music joy dream sleep love
-man go far path seek water earth tree
-woman child food home love give joy good
-light animal hear person go outside work
-person internet know idea think write make
-dark person sleep dream light after joy
-child question see sky know think dream
-man fire food give woman child joy love
-old woman speak know give child love good
-man woman love bond home child good always
-child see light sky joy love dream sleep
-woman work money home child food love good
-man woman conflict anger speak agree bond after
-person outside path tree water see far joy
-person go work money stress tired food sleep home
-dark cold sleep fire light food dream joy
-light work internet idea think make good
-child music hear see dream joy love sleep
-old man give child know speak love good
-man seek path far water earth tree see
-woman make food give child man love joy
-dark sleep dream light outside go see joy
-person fire food light dark sleep dream joy
-child joy music hear dream love sleep always
-woman man love bond home good child joy
-person work stress want free go outside path
-child see sky light tree water animal joy
-man make home stone earth tree good joy
-woman child love food sleep dream joy light
-old person tired sleep dream remember grief
-man woman love bond home child always good
-person internet know much idea think write change
-light outside tree sky see far joy good
-child animal water see give food joy love
-old man remember speak know grief miss love
-woman work money stress tired home child food
-man go far path water earth see tree joy
-person make idea think write change good joy
-dark cold fire light food sleep dream joy
-person go outside tree water sky see joy good
-child food joy sleep dream light love always
-woman think idea change choose free good path
-man work money have stress tired home sleep
-person outside tree water see joy good light
-old remember miss grief love speak know give
-child animal see hear joy love give food
-man woman conflict speak agree bond love after
-person internet seek know idea write think make
-light go outside path far see joy tree
-woman give child food love know good speak
-man go work money stress tired home sleep food
-person make fire food light see joy give
-child question how know think dream joy love
-old man woman bond love good speak know
-person work stress money want change free go
-light outside go see tree sky joy good
-man make food fire give woman child joy
-child see animal water joy love food give
-woman work money stress home child food love
-person path go far water earth see joy tree
-old tired dream sleep remember grief miss love
-man woman love bond child home good joy
-person go far path water earth tree see joy
-child hear music dream joy love sleep always
-woman choose free go far path joy good
-man work money tired stress home food sleep
-person outside tree water path see sky joy good
-old man speak know give child idea love good
-man woman love child home food joy good always
-person work stress money tired want change free
-light go outside see tree water sky joy good
-child food sleep dream joy love light always
-woman give child food love know speak good
-man go work money stress home tired food sleep
-person make fire food light see give joy good
-dark sleep dream light after joy outside go see
-child animal see hear joy love food give always
-old remember grief miss love speak know good
-man woman bond love home child joy good always
-person internet seek know idea think write make change`;
+// ===== UI =====
+const $ = id => document.getElementById(id);
+function glyphImg(name, size = 32) {
+  return `<img src="glyphs/${name}.svg" alt="${name}" title="${name}" width="${size}" height="${size}">`;
+}
 
-const TRAINING_DATA = `the sun rose and the birds started singing
+// ── Glyph Bar ──
+function renderGlyphBar() {
+  const bar = $('glyph-bar');
+  bar.innerHTML = ALL_GLYPHS.map(g =>
+    `<button onclick="addGlyph('${g}')" class="${g === 'BE' ? 'be-glyph' : ''}">${glyphImg(g, 28)}<span class="tip">${g}</span></button>`
+  ).join('');
+}
+
+// ── Help Overlay ──
+function renderHelpGlyphs() {
+  let html = '';
+  for (const cat of CATEGORIES) {
+    html += `<div style="width:100%;font-size:8px;color:var(--accent);letter-spacing:3px;margin-top:12px;text-transform:uppercase;">${cat.name}</div>`;
+    for (const g of cat.glyphs) {
+      html += `<div class="item">${glyphImg(g, 20)}<span>${g}</span></div>`;
+    }
+  }
+  $('help-glyph-ref').innerHTML = html;
+}
+
+function showHelp() { $('help-overlay').classList.add('visible'); }
+function hideHelp() { $('help-overlay').classList.remove('visible'); }
+function showTrain() { $('train-overlay').classList.add('visible'); }
+function hideTrain() { $('train-overlay').classList.remove('visible'); }
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { hideHelp(); hideTrain(); }
+});
+
+// ── Compose ──
+let composeGlyphs = [];
+
+function addGlyph(name) {
+  composeGlyphs.push(name);
+  renderCompose();
+}
+function undoGlyph() { composeGlyphs.pop(); renderCompose(); }
+function clearInput() { composeGlyphs = []; renderCompose(); }
+
+function renderCompose() {
+  const el = $('compose-display');
+  if (composeGlyphs.length === 0) {
+    el.innerHTML = '<span class="empty">click glyphs to speak</span>';
+    $('btn-send').disabled = true;
+    return;
+  }
+  el.innerHTML = composeGlyphs.map(g => `<span class="tok">${glyphImg(g, 24)}</span>`).join('');
+  $('btn-send').disabled = !(_plainModel || _trained);
+}
+
+// ── Conversation ──
+function addMessage(glyphs, type) {
+  $('placeholder-msg')?.remove();
+  const conv = $('conversation');
+  const msg = document.createElement('div');
+  msg.className = `msg msg-${type}`;
+  if (type === 'you') {
+    msg.innerHTML = `<div class="msg-label">you</div>` +
+      glyphs.map(g => `<span class="glyph-tok">${glyphImg(g, 28)}</span>`).join('');
+  }
+  conv.appendChild(msg);
+  conv.scrollTop = conv.scrollHeight;
+  return msg;
+}
+
+function addCaveMessage(length) {
+  $('placeholder-msg')?.remove();
+  const conv = $('conversation');
+  const msg = document.createElement('div');
+  msg.className = 'msg msg-cave';
+  msg.innerHTML = `<div class="msg-label">cave</div>` +
+    Array(length).fill('<span class="glyph-tok mask-tok"></span>').join('');
+  conv.appendChild(msg);
+  conv.scrollTop = conv.scrollHeight;
+  return msg;
+}
+
+function updateCaveMessage(msg, glyphs, maskId) {
+  const tokenSet = (_plainModel ? _plainVocab : _trained).tokenSet;
+  msg.innerHTML = `<div class="msg-label">cave</div>` +
+    glyphs.map(id => {
+      if (id === maskId) return '<span class="glyph-tok mask-tok"></span>';
+      const name = tokenSet[id];
+      return `<span class="glyph-tok">${glyphImg(name, 36)}</span>`;
+    }).join('');
+  $('conversation').scrollTop = $('conversation').scrollHeight;
+}
+
+// ===== MODEL STATE =====
+let _plainModel = null, _plainVocab = null, _trained = null;
+let inferRunning = false;
+
+// ===== PRNG =====
+class SeededRandom {
+  constructor(seed) { this.state = seed; }
+  next() { this.state = (this.state * 1664525 + 1013904223) & 0xFFFFFFFF; return (this.state >>> 0) / 0xFFFFFFFF; }
+  gauss(mu=0,sigma=1) { let u,v,s; do{u=this.next()*2-1;v=this.next()*2-1;s=u*u+v*v;}while(s>=1||s===0); return mu+sigma*u*Math.sqrt(-2*Math.log(s)/s); }
+  shuffle(a) { for(let i=a.length-1;i>0;i--){const j=Math.floor(this.next()*(i+1));[a[i],a[j]]=[a[j],a[i]];} }
+  choices(p,w) { let t=0;for(let i=0;i<w.length;i++)t+=w[i];let r=this.next()*t;for(let i=0;i<p.length;i++){r-=w[i];if(r<=0)return p[i];}return p[p.length-1]; }
+}
+
+// ===== AUTOGRAD =====
+let _gen=0;
+class Value {
+  constructor(d,c=[],l=[]){this.data=d;this.grad=0;this._c0=c[0];this._c1=c[1];this._lg0=l[0];this._lg1=l[1];this._nch=c.length;this._gen=0;}
+  add(o){return o instanceof Value?new Value(this.data+o.data,[this,o],[1,1]):new Value(this.data+o,[this],[1]);}
+  mul(o){return o instanceof Value?new Value(this.data*o.data,[this,o],[o.data,this.data]):new Value(this.data*o,[this],[o]);}
+  pow(o){return new Value(this.data**o,[this],[o*this.data**(o-1)]);}
+  log(){return new Value(Math.log(this.data),[this],[1/this.data]);}
+  exp(){const e=Math.exp(this.data);return new Value(e,[this],[e]);}
+  relu(){return new Value(Math.max(0,this.data),[this],[+(this.data>0)]);}
+  neg(){return new Value(-this.data,[this],[-1]);}
+  sub(o){return this.add(o instanceof Value?o.neg():-o);}
+  div(o){return this.mul(o instanceof Value?o.pow(-1):1/o);}
+  backward(){const gen=++_gen;const t=[];function b(v){if(v._gen===gen)return;v._gen=gen;if(v._nch>=1)b(v._c0);if(v._nch===2)b(v._c1);t.push(v);}b(this);this.grad=1;for(let i=t.length-1;i>=0;--i){const v=t[i],g=v.grad;if(v._nch>=1)v._c0.grad+=v._lg0*g;if(v._nch===2)v._c1.grad+=v._lg1*g;}}
+}
+const sum=(a)=>a.reduce((x,y)=>x.add(y));
+const zip=(a,b)=>a.map((ai,i)=>[ai,b[i]]);
+function linear(x,w){return w.map(wo=>sum(wo.map((wi,i)=>wi.mul(x[i]))));}
+function softmax(l){const m=Math.max(...l.map(v=>v.data));const e=l.map(v=>v.sub(m).exp());const t=sum(e);return e.map(x=>x.div(t));}
+function rmsnorm(x){const ms=sum(x.map(xi=>xi.mul(xi))).mul(1/x.length);const s=ms.add(1e-5).pow(-0.5);return x.map(xi=>xi.mul(s));}
+
+// ===== PLAIN MODEL (pre-trained weights) =====
+async function loadNotorchBin(url) {
+  const r=await fetch(url);if(!r.ok)throw new Error(r.status);
+  const buf=await r.arrayBuffer();const v=new DataView(buf);let off=0;
+  if(v.getUint32(off,true)!==0x4E544F52)throw new Error('not notorch');off+=4;
+  const n=v.getInt32(off,true);off+=4;const tensors=[];
+  for(let i=0;i<n;i++){const nd=v.getInt32(off,true);off+=4;const sh=[];let len=1;
+    for(let d=0;d<nd;d++){const s=v.getInt32(off,true);off+=4;sh.push(s);len*=s;}
+    tensors.push({shape:sh,data:new Float32Array(buf.slice(off,off+len*4)),len});off+=len*4;}
+  return tensors;
+}
+
+class PlainModel {
+  constructor(t,c){this.E=c.embd;this.H=c.heads;this.HD=c.embd/c.heads|0;this.L=c.layers;this.CTX=c.ctx;this.Vp=c.vocab_size+1;this.FFN=4*c.embd;
+    let i=0;this.wte=t[i++];this.wpe=t[i++];this.layers=[];
+    for(let l=0;l<this.L;l++)this.layers.push({rms1:t[i++],wq:t[i++],wk:t[i++],wv:t[i++],wo:t[i++],rms2:t[i++],fc1:t[i++],fc2:t[i++]});
+    this.rms_f=t[i++];this.head=t[i++];}
+  resetKV(){this.kvK=Array.from({length:this.L},()=>[]);this.kvV=Array.from({length:this.L},()=>[]);}
+  _rms(x,g){const n=x.length;let s=0;for(let j=0;j<n;j++)s+=x[j]*x[j];const sc=1/Math.sqrt(s/n+1e-6);const o=new Float32Array(n);for(let j=0;j<n;j++)o[j]=x[j]*sc*g.data[j];return o;}
+  _mv(w,x,no,ni){const o=new Float32Array(no);for(let i=0;i<no;i++){let s=0;const b=i*ni;for(let j=0;j<ni;j++)s+=w.data[b+j]*x[j];o[i]=s;}return o;}
+  forward(tid,pid){const E=this.E,H=this.H,HD=this.HD;const x=new Float32Array(E);
+    for(let j=0;j<E;j++)x[j]=this.wte.data[tid*E+j]+this.wpe.data[pid*E+j];
+    for(let l=0;l<this.L;l++){const ly=this.layers[l];const xn=this._rms(x,ly.rms1);
+      const q=this._mv(ly.wq,xn,E,E),k=this._mv(ly.wk,xn,E,E),v=this._mv(ly.wv,xn,E,E);
+      this.kvK[l].push(new Float32Array(k));this.kvV[l].push(new Float32Array(v));
+      const sl=this.kvK[l].length,ao=new Float32Array(E),sc=1/Math.sqrt(HD);
+      for(let h=0;h<H;h++){const hs=h*HD;const scores=new Float32Array(sl);
+        for(let t=0;t<sl;t++){let d=0;for(let j=0;j<HD;j++)d+=q[hs+j]*this.kvK[l][t][hs+j];scores[t]=d*sc;}
+        let mx=scores[0];for(let t=1;t<sl;t++)if(scores[t]>mx)mx=scores[t];
+        let sm=0;for(let t=0;t<sl;t++){scores[t]=Math.exp(scores[t]-mx);sm+=scores[t];}
+        for(let t=0;t<sl;t++)scores[t]/=sm;
+        for(let j=0;j<HD;j++){let val=0;for(let t=0;t<sl;t++)val+=scores[t]*this.kvV[l][t][hs+j];ao[hs+j]=val;}}
+      const proj=this._mv(ly.wo,ao,E,E);for(let j=0;j<E;j++)x[j]+=proj[j];
+      const xn2=this._rms(x,ly.rms2);const f1=this._mv(ly.fc1,xn2,this.FFN,E);
+      for(let j=0;j<this.FFN;j++)f1[j]=f1[j]/(1+Math.exp(-f1[j]));
+      const f2=this._mv(ly.fc2,f1,E,this.FFN);for(let j=0;j<E;j++)x[j]+=f2[j];}
+    return this._mv(this.head,this._rms(x,this.rms_f),this.Vp,E);}
+}
+
+function sampleTopP(logits,n,temp,topP){
+  let mx=logits[0];for(let i=1;i<n;i++)if(logits[i]>mx)mx=logits[i];
+  const p=new Float32Array(n);let sm=0;for(let i=0;i<n;i++){p[i]=Math.exp((logits[i]-mx)/temp);sm+=p[i];}
+  for(let i=0;i<n;i++)p[i]/=sm;
+  const idx=Array.from({length:n},(_,i)=>i);idx.sort((a,b)=>p[b]-p[a]);
+  let cum=0,ns=0;for(let i=0;i<n;i++){cum+=p[idx[i]];ns++;if(cum>=topP)break;}
+  let ns2=0;for(let i=0;i<ns;i++)ns2+=p[idx[i]];
+  const r=Math.random();let c=0;for(let i=0;i<ns;i++){c+=p[idx[i]]/ns2;if(c>=r)return idx[i];}
+  return idx[0];
+}
+
+async function tryLoadPreTrained() {
+  try {
+    const [cr,vr]=await Promise.all([fetch('weights/cavellman_v3.bin.json'),fetch('weights/cavellman_v3.bin.vocab')]);
+    if(!cr.ok||!vr.ok)throw new Error('not found');
+    const config=await cr.json();const vt=await vr.text();const lines=vt.trim().split('\n');
+    const vs=parseInt(lines[0]);const tokenSet=lines.slice(1,1+vs);
+    $('statusText').textContent='loading weights...';$('statusDot').style.display='';
+    const tensors=await loadNotorchBin('weights/cavellman_v3.bin');
+    _plainModel=new PlainModel(tensors,config);
+    _plainVocab={tokenSet,token_to_id:new Map(tokenSet.map((t,i)=>[t,i])),BOS:vs,vocab_size:vs+1};
+    $('statusText').textContent=`${config.preset} · ${(config.params/1000|0)}K params · loss ${config.final_loss.toFixed(2)}`;
+    $('statusDot').style.display='none';
+    $('btn-send').disabled=composeGlyphs.length===0;
+    return true;
+  } catch(e) { return false; }
+}
+
+// ===== SPEAK (inference) =====
+async function speak() {
+  if(inferRunning||composeGlyphs.length===0)return;
+  if(!_plainModel&&!_trained)return;
+  inferRunning=true;$('btn-send').disabled=true;
+
+  const v=_plainModel?_plainVocab:_trained;
+  const tokenSet=v.tokenSet,t2i=v.token_to_id,BOS=v.BOS,vs=v.vocab_size;
+  const temperature=+($('cfgTemp')?.value||0.7);
+  const prompt=composeGlyphs.filter(g=>t2i.has(g));
+  if(!prompt.length){inferRunning=false;$('btn-send').disabled=false;return;}
+
+  addMessage(prompt,'you');
+  clearInput();
+
+  if(_plainModel) {
+    // Plain model: autoregressive generation
+    _plainModel.resetKV();
+    const ids=[BOS,...prompt.map(g=>t2i.get(g))];
+    for(let i=0;i<ids.length-1;i++)_plainModel.forward(ids[i],i);
+    let lastId=ids[ids.length-1],posId=ids.length-1;
+    const maxGen=Math.min(12,_plainModel.CTX-ids.length);
+    const genGlyphs=[];
+    const caveMsg=addCaveMessage(maxGen);
+
+    for(let gi=0;gi<maxGen;gi++){
+      const logits=_plainModel.forward(lastId,posId);
+      const nextId=sampleTopP(logits,vs,temperature,0.9);
+      if(nextId===BOS)break;
+      genGlyphs.push(nextId);
+      const display=[...genGlyphs,...Array(maxGen-genGlyphs.length).fill(BOS+1)];
+      // Show revealed + masks
+      caveMsg.innerHTML=`<div class="msg-label">cave</div>`+
+        display.map((id,i)=>i<genGlyphs.length
+          ?`<span class="glyph-tok">${glyphImg(tokenSet[id],36)}</span>`
+          :'<span class="glyph-tok mask-tok"></span>').join('');
+      $('conversation').scrollTop=$('conversation').scrollHeight;
+      lastId=nextId;posId++;
+      await new Promise(r=>setTimeout(r,200));
+    }
+    // Final: clean display
+    caveMsg.innerHTML=`<div class="msg-label">cave</div>`+
+      genGlyphs.map(id=>`<span class="glyph-tok">${glyphImg(tokenSet[id],36)}</span>`).join('');
+
+  } else if(_trained&&_trained.isDiffusion) {
+    // Diffusion: MASK → iterative unmasking
+    const {n_layer,block_size,rng,gpt,MASK_ID}=_trained;
+    const genLen=Math.min(12,block_size);
+    const seq=new Array(genLen).fill(MASK_ID);
+    for(let i=0;i<prompt.length&&i<genLen;i++)seq[i]=t2i.get(prompt[i]);
+    const caveMsg=addCaveMessage(genLen);
+    updateCaveMessage(caveMsg,seq,MASK_ID);
+    await new Promise(r=>setTimeout(r,400));
+
+    for(let t=0;t<6;t++){
+      const masked=seq.filter(s=>s===MASK_ID);if(!masked.length)break;
+      const keys=Array.from({length:n_layer},()=>[]);const vals=Array.from({length:n_layer},()=>[]);
+      const preds=[];
+      for(let pos=0;pos<genLen;pos++){
+        const logits=gpt(seq[pos],pos,keys,vals);
+        if(seq[pos]===MASK_ID){
+          const probs=softmax(logits.map(l=>l.div(temperature)));
+          let bestId=0,bestP=0;for(let j=0;j<tokenSet.length;j++){const p=probs[j].data;if(p>bestP){bestP=p;bestId=j;}}
+          preds.push({pos,bestId,confidence:bestP});
+        }
+      }
+      preds.sort((a,b)=>b.confidence-a.confidence);
+      const reveal=preds.slice(0,Math.ceil((genLen-prompt.length)/6));
+      for(const p of reveal)seq[p.pos]=p.bestId;
+      updateCaveMessage(caveMsg,seq,MASK_ID);
+      await new Promise(r=>setTimeout(r,600));
+    }
+    $('statusText').textContent='cave painting revealed';
+
+  } else if(_trained) {
+    // Autoregressive
+    const {n_layer,block_size,rng,gpt}=_trained;
+    const ids=[BOS,...prompt.map(g=>t2i.get(g))];
+    const keys=Array.from({length:n_layer},()=>[]);const vals=Array.from({length:n_layer},()=>[]);
+    for(let i=0;i<ids.length-1;i++)gpt(ids[i],i,keys,vals);
+    let lastId=ids[ids.length-1],posId=ids.length-1;
+    const genGlyphs=[],caveMsg=addCaveMessage(12);
+    for(let gi=0;gi<12&&gi<block_size-ids.length;gi++){
+      const logits=gpt(lastId,posId,keys,vals);
+      const probs=softmax(logits.map(l=>l.div(temperature)));
+      const nextId=rng.choices(Array.from({length:vs},(_,i)=>i),probs.map(p=>p.data));
+      if(nextId===BOS)break;
+      genGlyphs.push(nextId);lastId=nextId;posId++;
+      caveMsg.innerHTML=`<div class="msg-label">cave</div>`+genGlyphs.map(id=>`<span class="glyph-tok">${glyphImg(tokenSet[id],36)}</span>`).join('');
+      $('conversation').scrollTop=$('conversation').scrollHeight;
+      await new Promise(r=>setTimeout(r,300));
+    }
+  }
+
+  inferRunning=false;$('btn-send').disabled=false;
+}
+
+// ===== TRAINING =====
+let running=false,stopFlag=false;const lossHistory=[];
+
+function tlog(html){const el=$('train-log');el.innerHTML+=html+'\n';el.scrollTop=el.scrollHeight;}
+function lossColor(v){return v>3?'loss-bad':v>1.5?'loss-ok':'loss-good';}
+
+function drawLossChart(){
+  const canvas=$('lossCanvas');if(!canvas)return;const ctx=canvas.getContext('2d');
+  const dpr=window.devicePixelRatio||1;const rect=canvas.getBoundingClientRect();
+  canvas.width=rect.width*dpr;canvas.height=rect.height*dpr;ctx.scale(dpr,dpr);
+  const W=rect.width,H=rect.height;ctx.clearRect(0,0,W,H);if(lossHistory.length<2)return;
+  const minL=Math.min(...lossHistory),maxL=Math.max(...lossHistory),range=maxL-minL||1;
+  const pad={t:8,b:16,l:32,r:8},pw=W-pad.l-pad.r,ph=H-pad.t-pad.b;
+  ctx.strokeStyle='#1e1a15';ctx.lineWidth=0.5;
+  for(let i=0;i<=4;i++){const y=pad.t+ph*i/4;ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(W-pad.r,y);ctx.stroke();
+    ctx.fillStyle='#665';ctx.font='8px JetBrains Mono';ctx.fillText((maxL-range*i/4).toFixed(1),2,y+3);}
+  const grad=ctx.createLinearGradient(0,pad.t,0,H-pad.b);
+  grad.addColorStop(0,'#e74c3c');grad.addColorStop(0.5,'#f39c12');grad.addColorStop(1,'#c4944c');
+  ctx.strokeStyle=grad;ctx.lineWidth=1.5;ctx.beginPath();
+  for(let i=0;i<lossHistory.length;i++){const x=pad.l+i/(lossHistory.length-1)*pw;const y=pad.t+(maxL-lossHistory[i])/range*ph;i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);}
+  ctx.stroke();
+}
+
+async function startTraining(){
+  if(running)return;running=true;stopFlag=false;
+  $('btnTrain').disabled=true;$('btnStop').style.display='';$('train-log').innerHTML='';lossHistory.length=0;
+  $('statusDot').style.display='';$('statusText').textContent='training...';
+
+  const isDiffusion=$('cfgMode').value==='diffusion';
+  const rng=new SeededRandom(42);
+  const n_embd=+$('cfgEmbd').value,n_head=+$('cfgHeads').value,n_layer=+$('cfgLayers').value;
+  const block_size=+$('cfgBlock').value,num_steps=+$('cfgSteps').value,learning_rate=+$('cfgLR').value;
+  const head_dim=n_embd/n_head|0,scale=1/head_dim**0.5;
+  const beta1=0.85,beta2=0.99,eps_adam=1e-8;
+
+  const dataText=$('cfgData').value.trim();
+  if(!dataText){tlog('<span class="loss-bad">No data. Paste text or load sample.</span>');running=false;$('btnTrain').disabled=false;$('btnStop').style.display='none';return;}
+
+  const st=new SemanticTokenizer();
+  const docs=st.tokenize(dataText);
+  if(!docs.length){tlog('<span class="loss-bad">Could not tokenize. Check text.</span>');running=false;$('btnTrain').disabled=false;$('btnStop').style.display='none';return;}
+
+  const tokenSet=Object.keys(SEMANTIC_MAP).sort();
+  const token_to_id=new Map(tokenSet.map((t,i)=>[t,i]));
+  const BOS=tokenSet.length,MASK_ID=tokenSet.length+1,vocab_size=tokenSet.length+2;
+
+  tlog(`<span class="info">${isDiffusion?'DIFFUSION':'AUTOREGRESSIVE'} · ${docs.length} stories · vocab ${vocab_size}</span>`);
+  const preview=docs.slice(0,2).map(d=>d.join(' ')).join(' | ');
+  tlog(`<span class="info">preview: ${preview}</span>`);
+
+  const matrix=(no,ni,std=0.08)=>Array.from({length:no},()=>Array.from({length:ni},()=>new Value(rng.gauss(0,std))));
+  const sd={wte:matrix(vocab_size,n_embd),wpe:matrix(block_size,n_embd),lm_head:matrix(vocab_size,n_embd)};
+  for(let i=0;i<n_layer;i++){sd[`l${i}.wq`]=matrix(n_embd,n_embd);sd[`l${i}.wk`]=matrix(n_embd,n_embd);sd[`l${i}.wv`]=matrix(n_embd,n_embd);sd[`l${i}.wo`]=matrix(n_embd,n_embd);sd[`l${i}.f1`]=matrix(4*n_embd,n_embd);sd[`l${i}.f2`]=matrix(n_embd,4*n_embd);}
+  const params=Object.values(sd).flat(Infinity);
+  tlog(`<span class="info">params: ${params.length.toLocaleString()}</span>`);
+  const m_buf=new Float64Array(params.length),v_buf=new Float64Array(params.length);
+
+  function gpt(tid,pid,keys,vals){
+    const te=sd.wte[tid],pe=sd.wpe[pid];let x=zip(te,pe).map(([t,p])=>t.add(p));x=rmsnorm(x);
+    for(let li=0;li<n_layer;li++){let xr=x;x=rmsnorm(x);
+      const q=linear(x,sd[`l${li}.wq`]),k=linear(x,sd[`l${li}.wk`]),v=linear(x,sd[`l${li}.wv`]);
+      keys[li].push(k);vals[li].push(v);const xa=[];
+      for(let h=0;h<n_head;h++){const hs=h*head_dim;const qh=q.slice(hs,hs+head_dim);
+        const al=keys[li].map(kt=>sum(zip(qh,kt.slice(hs,hs+head_dim)).map(([qi,ki])=>qi.mul(ki))).mul(scale));
+        const aw=softmax(al);for(let j=0;j<head_dim;j++)xa.push(sum(aw.map((a,t)=>a.mul(vals[li][t][hs+j]))));}
+      x=linear(xa,sd[`l${li}.wo`]);x=x.map((a,i)=>a.add(xr[i]));xr=x;x=rmsnorm(x);
+      x=linear(x,sd[`l${li}.f1`]);x=x.map(xi=>xi.relu());x=linear(x,sd[`l${li}.f2`]);x=x.map((a,i)=>a.add(xr[i]));}
+    return linear(x,sd.lm_head);
+  }
+
+  const t0=performance.now();
+  for(let step=0;step<num_steps;step++){
+    if(stopFlag){tlog('<span class="info">stopped.</span>');break;}
+    const doc=docs[step%docs.length];
+    const orig=doc.map(t=>token_to_id.get(t)).filter(t=>t!==undefined);
+    const n=Math.min(block_size,orig.length);if(n<2)continue;
+    const keys=Array.from({length:n_layer},()=>[]),vals=Array.from({length:n_layer},()=>[]),losses=[];
+    if(isDiffusion){
+      const mr=0.3+rng.next()*0.4;const inp=[...orig];const mf=new Array(n).fill(false);
+      for(let i=0;i<n;i++)if(rng.next()<mr){inp[i]=MASK_ID;mf[i]=true;}
+      for(let pos=0;pos<n;pos++){const logits=gpt(inp[pos],pos,keys,vals);if(mf[pos]){const probs=softmax(logits);losses.push(probs[orig[pos]].log().neg());}}
+    }else{
+      const toks=[BOS,...orig,BOS];const an=Math.min(block_size,toks.length-1);
+      for(let pos=0;pos<an;pos++){const logits=gpt(toks[pos],pos,keys,vals);const probs=softmax(logits);losses.push(probs[toks[pos+1]].log().neg());}
+    }
+    if(!losses.length)continue;
+    const loss=sum(losses).mul(1/losses.length);loss.backward();
+    const lr_t=learning_rate*(1-step/num_steps);const bc1=1-beta1**(step+1),bc2=1-beta2**(step+1);
+    for(let i=0;i<params.length;i++){const p=params[i];m_buf[i]=beta1*m_buf[i]+(1-beta1)*p.grad;v_buf[i]=beta2*v_buf[i]+(1-beta2)*p.grad**2;p.data-=lr_t*(m_buf[i]/bc1)/(Math.sqrt(v_buf[i]/bc2)+eps_adam);p.grad=0;}
+    lossHistory.push(loss.data);$('progressFill').style.width=((step+1)/num_steps*100).toFixed(0)+'%';
+    const li=Math.max(1,num_steps/30|0);
+    if((step+1)%li===0||step===0||step===num_steps-1){
+      const el=((performance.now()-t0)/1000).toFixed(0);
+      tlog(`<span>step ${String(step+1).padStart(5)}/${num_steps}</span>  loss <span class="${lossColor(loss.data)}">${loss.data.toFixed(4)}</span>  ${el}s`);
+      drawLossChart();$('statusText').textContent=`training ${((step+1)/num_steps*100|0)}%`;
+    }
+    if(step%2===0)await new Promise(r=>setTimeout(r,0));
+  }
+
+  _trained={state_dict:sd,tokenSet,token_to_id,BOS,MASK_ID,vocab_size,n_layer,block_size,rng,gpt,isDiffusion};
+  const fl=lossHistory[lossHistory.length-1];
+  tlog(`<span class="info">done — loss ${fl.toFixed(4)}</span>`);
+  $('statusText').textContent=`trained · loss ${fl.toFixed(2)}`;$('statusDot').style.display='none';
+  $('btn-send').disabled=composeGlyphs.length===0;
+  running=false;$('btnTrain').disabled=false;$('btnStop').style.display='none';
+}
+
+function stopTraining(){stopFlag=true;}
+function handleFileDrop(e){const f=e.dataTransfer.files[0];if(f)readFile(f);}
+function handleFileSelect(e){const f=e.target.files[0];if(f)readFile(f);}
+function readFile(f){const r=new FileReader();r.onload=e=>{$('cfgData').value=e.target.result.trim();tlog(`<span class="info">${f.name} loaded</span>`);};r.readAsText(f,'utf-8');}
+function loadSampleData(){$('cfgData').value=TRAINING_DATA;tlog(`<span class="info">sample loaded</span>`);}
+
+const TRAINING_DATA=`the sun rose and the birds started singing
 a small boy woke up early and ran downstairs
 the old dog stretched by the fireplace and fell asleep
 she opened the window and cool morning air filled the room
 he made coffee and sat down to read the paper quietly
-the baker arrived at the shop before dawn to start the bread
 rain began to fall gently and the streets grew quiet
-the cat jumped on the windowsill and watched the sparrows outside
+the cat jumped on the windowsill and watched the sparrows
 two old friends met at the corner and talked for hours
 the child found a coin on the floor and kept it
-the teacher wrote a question on the board and waited
 she forgot her umbrella and walked home slowly in the drizzle
 the farmer looked at the sky and decided to harvest today
-a dog barked in the distance and the whole village woke up
-the train arrived late and everyone on the platform sighed
 he stayed awake all night reading and fell asleep at the table
-the little girl lost her balloon and cried until mom got a new one
 the fisherman cast his line into the river and waited quietly
 the fire crackled in the hearth and the family gathered around
 she planted seeds in the garden and promised to water them daily
-the wind blew hard and leaves flew everywhere
 grandpa told a story by the campfire and the children listened
 he went to the market and bought tomatoes and fresh bread
 she sang an old song and the baby fell asleep right away
-the ship left the harbor at sunrise
 the cat chased a butterfly in the garden but never caught it
 the neighbors sat together in the evening and drank mint tea
 the boy built a tower of blocks and it fell down
 the old woman knitted a scarf by the window
 they walked to the sea and dipped their feet in the cold water
-the rooster crowed in the morning and everyone woke up
 he fixed the bicycle and rode it to work
 she found an old book on the shelf and read it breathlessly
-the rain stopped and sunshine came from behind the clouds
 the children played football in the yard until dark
 mom made hot soup and the house smelled wonderful
-he gazed from the balcony at the sea and thought about everything
 she lit candles on friday evening and said a blessing
-the uncle arrived from abroad and everyone was happy to see him
 he played guitar and his friends sang along
-the girl drew a picture of a sunset in warm colors
 the baby laughed when he saw the dog running
-they sat in a cafe and watched the people pass by
 he read an important email and rushed to a meeting
 she studied all night for the exam and felt tired in the morning
-the wind brought the smell of the sea and salt
 the boy saw a cat on the fence and tried to call it
 the old man sat in the park and threw crumbs to the pigeons
 she did yoga in the morning and felt calm all day
 he drank a cold beer after a long day of work
-the shop closed and the owner pulled down the shutters
 they hiked in the valley and found a beautiful spot for a picnic
 the moon lit up the room and she could not sleep
 he heard music from far away and walked toward the sound
 she baked a cake for her son birthday
-the children ran down the street after the ice cream truck
 the rain fell hard and they went into the shelter
 she wrote a letter to her friend abroad and mailed it
 he found a wallet on the street and returned it to the owner
 the sun set behind the sea and the sky turned orange
-they built a little hut for the holiday and the kids decorated it
 he learned to drive and passed the test on the first try
 she read a story to the children before bedtime
 the dog dug a hole in the garden and the owner got upset
-they made hummus together and put lots of lemon
 the baby took his first steps and the parents clapped
-he sat on the train and watched the scenery rush past the window
 she went to the doctor because her throat hurt
 the boy read a book with a flashlight under the blanket
 they lit a bonfire on the beach and sang songs
-the neighbor started playing piano at night and she could not sleep
 he cooked steak and put lots of pepper
 she ran in the park every morning with her headphones on
 the children built a sandcastle on the beach
-he got a letter from the army and did not know what to do
 she started a new company and worked on it day and night
-they ate falafel in pita bread with lots of tahini
 the boy climbed a tree and saw the whole neighborhood from above
-the sun jumped from the sea and the day began
-he went to morning prayer and came back with a bread roll
 she laughed so hard that tears rolled down her face
-the camel walked in the desert and did not look back
 they sat on the roof and watched the stars
-the girl petted the cat and it purred happily
 he drank arak with friends on friday
-she bought a new dress for the wedding of her friend
 the boy ran with a kite in the open field
-they made a big shakshuka for the whole family
 he looked at the sunset from the mountain and breathed deeply
 she wrote code all night and found the bug at sunrise
 the old woman sat on the porch and knitted quietly
 they walked through the market and bought spices
-the morning light came through the curtains and warmed the bed
 he picked up his daughter from school and they got ice cream
 the storm knocked out the power and they lit candles
 she danced in the kitchen while making dinner
-the boy threw stones into the lake and counted the skips
 two sisters argued about something small then hugged and forgot
 the dog waited by the door all day for his owner
 an old man played chess alone in the park
@@ -618,13 +773,10 @@ she packed her bags and moved to a new city
 the rain made puddles and children jumped in them laughing
 he fixed the leaky faucet and felt proud of himself
 the grandmother told stories nobody else remembered
-a cat slept in a patch of sunlight on the floor
 they planted a tree together on the first day of spring
 he wrote a poem on a napkin at the cafe
-she watched the sunrise from the hospital window
 the kids sold lemonade on the corner for pocket money
 an old couple held hands walking slowly through the park
-the power came back on and everyone cheered
 she burned dinner and they ordered pizza instead
 he taught his son to ride a bike in the parking lot
 the first snow fell and the whole city looked different
@@ -639,1020 +791,18 @@ they sang happy birthday off key but with love
 he missed the last bus and walked home under the stars
 she reread the letter three times before putting it away
 the dog brought back a stick nobody had thrown
-the market closed early because of the heat
 a child drew a family portrait and gave it to dad
-the old clock on the wall stopped and nobody noticed
 they moved the couch to the other wall and the room felt new
 she took a photo of the meal before eating it
 he waved goodbye from the train window until she disappeared`;
 
-// ===== WebGPU Detection =====
-let hasWebGPU = false;
-(async () => {
-  try {
-    if (navigator.gpu) {
-      const adapter = await navigator.gpu.requestAdapter();
-      if (adapter) { hasWebGPU = true; }
-    }
-  } catch (e) {}
-  const el = document.getElementById('cfgGPU');
-  if (el) el.value = hasWebGPU ? 'available' : 'CPU (fine for this scale)';
-})();
-
-// ===== PRNG =====
-class SeededRandom {
-  constructor(seed) { this.state = seed; }
-  next() { this.state = (this.state * 1664525 + 1013904223) & 0xFFFFFFFF; return (this.state >>> 0) / 0xFFFFFFFF; }
-  gauss(mu = 0, sigma = 1) {
-    let u, v, s;
-    do { u = this.next() * 2 - 1; v = this.next() * 2 - 1; s = u*u + v*v; } while (s >= 1 || s === 0);
-    return mu + sigma * u * Math.sqrt(-2 * Math.log(s) / s);
-  }
-  shuffle(arr) { for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(this.next() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; } }
-  choices(pop, weights) {
-    let total = 0; for (let i = 0; i < weights.length; i++) total += weights[i];
-    let r = this.next() * total;
-    for (let i = 0; i < pop.length; i++) { r -= weights[i]; if (r <= 0) return pop[i]; }
-    return pop[pop.length - 1];
-  }
+// ===== INIT =====
+async function initApp(){
+  renderGlyphBar();renderHelpGlyphs();renderCompose();
+  const loaded=await tryLoadPreTrained();
+  if(!loaded){$('statusText').textContent='open ⚙ to train · or serve from web server for pre-trained weights';}
 }
-
-// ===== Autograd =====
-let _gen = 0;
-class Value {
-  constructor(data, children = [], local_grads = []) {
-    this.data = data; this.grad = 0;
-    this._c0 = children[0]; this._c1 = children[1];
-    this._lg0 = local_grads[0]; this._lg1 = local_grads[1];
-    this._nch = children.length; this._gen = 0;
-  }
-  add(other) {
-    if (other instanceof Value) return new Value(this.data + other.data, [this, other], [1, 1]);
-    return new Value(this.data + other, [this], [1]);
-  }
-  mul(other) {
-    if (other instanceof Value) return new Value(this.data * other.data, [this, other], [other.data, this.data]);
-    return new Value(this.data * other, [this], [other]);
-  }
-  pow(other) { return new Value(this.data ** other, [this], [other * this.data ** (other - 1)]); }
-  log() { return new Value(Math.log(this.data), [this], [1 / this.data]); }
-  exp() { const e = Math.exp(this.data); return new Value(e, [this], [e]); }
-  relu() { return new Value(Math.max(0, this.data), [this], [+(this.data > 0)]); }
-  neg() { return new Value(-this.data, [this], [-1]); }
-  sub(other) { return this.add(other instanceof Value ? other.neg() : -other); }
-  div(other) { return this.mul(other instanceof Value ? other.pow(-1) : 1 / other); }
-  backward() {
-    const gen = ++_gen; const topo = [];
-    function build_topo(v) {
-      if (v._gen === gen) return; v._gen = gen;
-      if (v._nch >= 1) build_topo(v._c0);
-      if (v._nch === 2) build_topo(v._c1);
-      topo.push(v);
-    }
-    build_topo(this); this.grad = 1;
-    for (let i = topo.length - 1; i >= 0; --i) {
-      const v = topo[i], g = v.grad;
-      if (v._nch >= 1) v._c0.grad += v._lg0 * g;
-      if (v._nch === 2) v._c1.grad += v._lg1 * g;
-    }
-  }
-}
-
-// ===== GPT Primitives =====
-const sum = (arr) => arr.reduce((a, b) => a.add(b));
-const zip = (a, b) => a.map((ai, i) => [ai, b[i]]);
-function linear(x, w) { return w.map(wo => sum(wo.map((wi, i) => wi.mul(x[i])))); }
-function softmax(logits) {
-  const max_val = Math.max(...logits.map(v => v.data));
-  const exps = logits.map(v => v.sub(max_val).exp());
-  const total = sum(exps);
-  return exps.map(e => e.div(total));
-}
-function rmsnorm(x) {
-  const ms = sum(x.map(xi => xi.mul(xi))).mul(1 / x.length);
-  const s = ms.add(1e-5).pow(-0.5);
-  return x.map(xi => xi.mul(s));
-}
-
-// ===== Plain Inference Engine (for pre-trained weights, no autograd) =====
-let _plainModel = null;
-let _plainVocab = null; // { tokenSet, token_to_id, BOS, vocab_size }
-
-async function loadNotorchBin(url) {
-  const resp = await fetch(url);
-  if (!resp.ok) throw new Error(`fetch ${url}: ${resp.status}`);
-  const buf = await resp.arrayBuffer();
-  const view = new DataView(buf);
-  let off = 0;
-  const magic = view.getUint32(off, true); off += 4;
-  if (magic !== 0x4E544F52) throw new Error('not a notorch file');
-  const nTensors = view.getInt32(off, true); off += 4;
-  const tensors = [];
-  for (let i = 0; i < nTensors; i++) {
-    const ndim = view.getInt32(off, true); off += 4;
-    const shape = [];
-    let len = 1;
-    for (let d = 0; d < ndim; d++) {
-      const s = view.getInt32(off, true); off += 4;
-      shape.push(s); len *= s;
-    }
-    const data = new Float32Array(buf.slice(off, off + len * 4));
-    off += len * 4;
-    tensors.push({ shape, data, len });
-  }
-  return tensors;
-}
-
-class PlainModel {
-  constructor(tensors, config) {
-    this.E = config.embd;
-    this.H = config.heads;
-    this.HD = Math.floor(config.embd / config.heads);
-    this.L = config.layers;
-    this.CTX = config.ctx;
-    this.Vp = config.vocab_size + 1;
-    this.FFN = 4 * config.embd;
-    let i = 0;
-    this.wte = tensors[i++]; this.wpe = tensors[i++];
-    this.layers = [];
-    for (let l = 0; l < this.L; l++) {
-      this.layers.push({
-        rms1: tensors[i++], wq: tensors[i++], wk: tensors[i++],
-        wv: tensors[i++], wo: tensors[i++], rms2: tensors[i++],
-        fc1: tensors[i++], fc2: tensors[i++],
-      });
-    }
-    this.rms_f = tensors[i++]; this.head = tensors[i++];
-    this.kvKeys = null; this.kvVals = null;
-  }
-
-  resetKV() {
-    this.kvKeys = Array.from({ length: this.L }, () => []);
-    this.kvVals = Array.from({ length: this.L }, () => []);
-  }
-
-  rmsnorm(x, gamma) {
-    const n = x.length;
-    let ss = 0;
-    for (let j = 0; j < n; j++) ss += x[j] * x[j];
-    const scale = 1.0 / Math.sqrt(ss / n + 1e-6);
-    const out = new Float32Array(n);
-    for (let j = 0; j < n; j++) out[j] = x[j] * scale * gamma.data[j];
-    return out;
-  }
-
-  matvec(w, x, nout, nin) {
-    const out = new Float32Array(nout);
-    for (let i = 0; i < nout; i++) {
-      let s = 0;
-      const base = i * nin;
-      for (let j = 0; j < nin; j++) s += w.data[base + j] * x[j];
-      out[i] = s;
-    }
-    return out;
-  }
-
-  forward(tokenId, posId) {
-    const E = this.E, H = this.H, HD = this.HD;
-    const x = new Float32Array(E);
-    for (let j = 0; j < E; j++)
-      x[j] = this.wte.data[tokenId * E + j] + this.wpe.data[posId * E + j];
-
-    for (let l = 0; l < this.L; l++) {
-      const ly = this.layers[l];
-      const xn = this.rmsnorm(x, ly.rms1);
-      const q = this.matvec(ly.wq, xn, E, E);
-      const k = this.matvec(ly.wk, xn, E, E);
-      const v = this.matvec(ly.wv, xn, E, E);
-      this.kvKeys[l].push(new Float32Array(k));
-      this.kvVals[l].push(new Float32Array(v));
-
-      const seqLen = this.kvKeys[l].length;
-      const attnOut = new Float32Array(E);
-      const sc = 1.0 / Math.sqrt(HD);
-      for (let h = 0; h < H; h++) {
-        const hs = h * HD;
-        const scores = new Float32Array(seqLen);
-        for (let t = 0; t < seqLen; t++) {
-          let dot = 0;
-          for (let j = 0; j < HD; j++) dot += q[hs + j] * this.kvKeys[l][t][hs + j];
-          scores[t] = dot * sc;
-        }
-        let mx = scores[0];
-        for (let t = 1; t < seqLen; t++) if (scores[t] > mx) mx = scores[t];
-        let sm = 0;
-        for (let t = 0; t < seqLen; t++) { scores[t] = Math.exp(scores[t] - mx); sm += scores[t]; }
-        for (let t = 0; t < seqLen; t++) scores[t] /= sm;
-        for (let j = 0; j < HD; j++) {
-          let val = 0;
-          for (let t = 0; t < seqLen; t++) val += scores[t] * this.kvVals[l][t][hs + j];
-          attnOut[hs + j] = val;
-        }
-      }
-
-      const proj = this.matvec(ly.wo, attnOut, E, E);
-      for (let j = 0; j < E; j++) x[j] += proj[j];
-
-      const xn2 = this.rmsnorm(x, ly.rms2);
-      const fc1 = this.matvec(ly.fc1, xn2, this.FFN, E);
-      for (let j = 0; j < this.FFN; j++) fc1[j] = fc1[j] / (1 + Math.exp(-fc1[j])); // SiLU
-      const fc2 = this.matvec(ly.fc2, fc1, E, this.FFN);
-      for (let j = 0; j < E; j++) x[j] += fc2[j];
-    }
-
-    const xf = this.rmsnorm(x, this.rms_f);
-    return this.matvec(this.head, xf, this.Vp, E);
-  }
-}
-
-function sampleTopP(logits, n, temp, topP) {
-  let mx = logits[0];
-  for (let i = 1; i < n; i++) if (logits[i] > mx) mx = logits[i];
-  const probs = new Float32Array(n);
-  let sm = 0;
-  for (let i = 0; i < n; i++) { probs[i] = Math.exp((logits[i] - mx) / temp); sm += probs[i]; }
-  for (let i = 0; i < n; i++) probs[i] /= sm;
-
-  const idx = Array.from({ length: n }, (_, i) => i);
-  idx.sort((a, b) => probs[b] - probs[a]);
-
-  let cum = 0, nucSz = 0;
-  for (let i = 0; i < n; i++) { cum += probs[idx[i]]; nucSz++; if (cum >= topP) break; }
-
-  let nucSum = 0;
-  for (let i = 0; i < nucSz; i++) nucSum += probs[idx[i]];
-
-  const r = Math.random();
-  let c = 0;
-  for (let i = 0; i < nucSz; i++) {
-    c += probs[idx[i]] / nucSum;
-    if (c >= r) return { id: idx[i], probs };
-  }
-  return { id: idx[0], probs };
-}
-
-async function tryLoadPreTrained() {
-  try {
-    const [configResp, vocabResp] = await Promise.all([
-      fetch('weights/cavellman_v3.bin.json'),
-      fetch('weights/cavellman_v3.bin.vocab'),
-    ]);
-    if (!configResp.ok || !vocabResp.ok) throw new Error('config/vocab not found');
-
-    const config = await configResp.json();
-    const vocabText = await vocabResp.text();
-    const lines = vocabText.trim().split('\n');
-    const vocabSize = parseInt(lines[0]);
-    const tokenSet = lines.slice(1, 1 + vocabSize);
-
-    $('trainStatusText').textContent = 'loading weights...';
-    $('trainDot').style.display = '';
-
-    const tensors = await loadNotorchBin('weights/cavellman_v3.bin');
-    _plainModel = new PlainModel(tensors, config);
-    _plainVocab = {
-      tokenSet,
-      token_to_id: new Map(tokenSet.map((t, i) => [t, i])),
-      BOS: vocabSize,
-      vocab_size: vocabSize + 1,
-    };
-
-    $('trainStatusText').textContent = `loaded — ${config.preset} (${(config.params/1000).toFixed(0)}K params, loss ${config.final_loss.toFixed(2)})`;
-    $('trainDot').style.display = 'none';
-    $('btnSpeak').disabled = false;
-    $('responseHint').textContent = 'Model loaded. Compose glyphs above and press Speak.';
-    $('trainDetails').removeAttribute('open');
-
-    log(`<span class="info">Pre-trained model loaded: ${config.preset} preset</span>`);
-    log(`<span class="info">  ${config.params.toLocaleString()} params, ${config.layers} layers, embd=${config.embd}, heads=${config.heads}</span>`);
-    log(`<span class="info">  training loss: ${config.final_loss.toFixed(4)}, vocab: ${vocabSize} glyphs</span>`);
-    log(`<span class="info">  Ready for inference. Use "Re-train" button to train a new model in browser.</span>`);
-
-    return true;
-  } catch (e) {
-    console.log('Pre-trained weights not available, will train in browser:', e.message);
-    return false;
-  }
-}
-
-// ===== UI Helpers =====
-const $ = id => document.getElementById(id);
-function glyphImg(name, size = 32) {
-  return `<img src="glyphs/${name}.svg" alt="${name}" title="${name}" width="${size}" height="${size}">`;
-}
-
-function renderAlphabet() {
-  let html = '';
-  for (const cat of CATEGORIES) {
-    html += `<div class="cat-title">${cat.name} (${cat.glyphs.length})</div><div class="glyph-grid">`;
-    for (const g of cat.glyphs) {
-      html += `<div class="glyph-cell">${glyphImg(g, 32)}<div class="gname">${g}</div></div>`;
-    }
-    html += '</div>';
-  }
-  $('alphabetGrid').innerHTML = html;
-}
-
-function renderKeyboard() {
-  let html = '';
-  for (const cat of CATEGORIES) {
-    html += `<div class="kb-cat-label">${cat.name}</div><div class="kb-grid">`;
-    for (const g of cat.glyphs) {
-      const cls = g === 'BE' ? 'kb-btn be-btn' : 'kb-btn';
-      html += `<button class="${cls}" onclick="addGlyph('${g}')" title="${g}">${glyphImg(g, 24)}<span class="kb-name">${g}</span></button>`;
-    }
-    html += '</div>';
-  }
-  $('keyboard').innerHTML = html;
-}
-
-function renderSuggestions() {
-  $('suggestions').innerHTML = EXAMPLES.map(ex =>
-    `<span class="suggestion" onclick="loadSuggestion('${ex}')">${ex}</span>`
-  ).join('');
-}
-
-// ===== Talk Input =====
-let talkInput = [];
-
-function addGlyph(name) {
-  talkInput.push(name);
-  renderInput();
-}
-
-function undoGlyph() {
-  talkInput.pop();
-  renderInput();
-}
-
-function clearInput() {
-  talkInput = [];
-  renderInput();
-}
-
-function loadSuggestion(text) {
-  talkInput = text.split(' ');
-  renderInput();
-}
-
-function renderInput() {
-  const el = $('inputDisplay');
-  if (talkInput.length === 0) {
-    el.innerHTML = '<span class="input-placeholder">click glyphs above to compose...</span>';
-    return;
-  }
-  el.innerHTML = talkInput.map(g =>
-    `<span class="tok">${glyphImg(g, 28)}<span class="label">${g}</span></span>`
-  ).join('') + '<span class="cursor"></span>';
-}
-
-// ===== Training =====
-let running = false, stopFlag = false;
-const lossHistory = [];
-let _trained = null;
-
-function log(html) {
-  const el = $('logOutput');
-  el.innerHTML += html + '\n';
-  el.scrollTop = el.scrollHeight;
-}
-
-function lossColor(v) { return v > 3 ? 'loss-bad' : v > 1.5 ? 'loss-ok' : 'loss-good'; }
-
-function drawLossChart() {
-  const canvas = $('lossCanvas');
-  const ctx = canvas.getContext('2d');
-  const dpr = window.devicePixelRatio || 1;
-  const rect = canvas.getBoundingClientRect();
-  canvas.width = rect.width * dpr; canvas.height = rect.height * dpr;
-  ctx.scale(dpr, dpr);
-  const W = rect.width, H = rect.height;
-  ctx.clearRect(0, 0, W, H);
-  if (lossHistory.length < 2) return;
-  const minL = Math.min(...lossHistory), maxL = Math.max(...lossHistory);
-  const range = maxL - minL || 1;
-  const pad = { t: 10, b: 20, l: 40, r: 10 };
-  const pw = W - pad.l - pad.r, ph = H - pad.t - pad.b;
-  ctx.strokeStyle = '#1e1a15'; ctx.lineWidth = 0.5;
-  for (let i = 0; i <= 4; i++) {
-    const y = pad.t + (ph * i / 4);
-    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
-    ctx.fillStyle = '#665'; ctx.font = '9px JetBrains Mono';
-    ctx.fillText((maxL - range * i / 4).toFixed(1), 2, y + 3);
-  }
-  const grad = ctx.createLinearGradient(0, pad.t, 0, H - pad.b);
-  grad.addColorStop(0, '#e74c3c'); grad.addColorStop(0.5, '#f39c12'); grad.addColorStop(1, '#c4944c');
-  ctx.strokeStyle = grad; ctx.lineWidth = 1.5; ctx.beginPath();
-  for (let i = 0; i < lossHistory.length; i++) {
-    const x = pad.l + (i / (lossHistory.length - 1)) * pw;
-    const y = pad.t + ((maxL - lossHistory[i]) / range) * ph;
-    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-  }
-  ctx.stroke();
-}
-
-async function startTraining() {
-  if (running) return;
-  running = true; stopFlag = false;
-  $('btnTrain').disabled = true;
-  $('btnStop').style.display = '';
-  $('btnSpeak').disabled = true;
-  $('logOutput').innerHTML = '';
-  $('samplesGrid').innerHTML = '';
-  $('trainDot').style.display = '';
-  lossHistory.length = 0;
-
-  const isDiffusion = $('cfgMode').value === 'diffusion';
-  const rng = new SeededRandom(42);
-  const n_embd = +$('cfgEmbd').value;
-  const n_head = +$('cfgHeads').value;
-  const n_layer = +$('cfgLayers').value;
-  const block_size = +$('cfgBlock').value;
-  const num_steps = +$('cfgSteps').value;
-  const learning_rate = +$('cfgLR').value;
-  const head_dim = Math.floor(n_embd / n_head);
-  const scale = 1 / head_dim ** 0.5;
-  const beta1 = 0.85, beta2 = 0.99, eps_adam = 1e-8;
-
-  // Read from textarea — any text goes through semantic tokenizer → 88 glyphs
-  const dataText = $('cfgData').value.trim();
-  if (!dataText) {
-    log('<span class="loss-bad">No training data. Paste text or select a dataset above.</span>');
-    running = false; $('btnTrain').disabled = false; $('btnStop').style.display = 'none';
-    return;
-  }
-
-  // Semantic tokenizer: any language → 88 glyph sequences
-  const st = new SemanticTokenizer();
-  const docs = st.tokenize(dataText);
-
-  if (docs.length === 0) {
-    log('<span class="loss-bad">No stories could be tokenized. Make sure text contains recognizable words.</span>');
-    running = false; $('btnTrain').disabled = false; $('btnStop').style.display = 'none';
-    return;
-  }
-
-  // Preview tokenization
-  const preview = docs.slice(0, 3).map(d => d.join(' ')).join('\n  ');
-  log(`<span class="info">Semantic tokenizer: ${dataText.split('\\n').filter(l=>l.trim()).length} lines → ${docs.length} glyph stories</span>`);
-  log(`<span class="info">Preview:\n  ${preview}</span>`);
-  rng.shuffle(docs);
-
-  // Fixed vocab: 88 glyphs + BOS + MASK (for diffusion)
-  const tokenSet = Object.keys(SEMANTIC_MAP).sort();
-  const token_to_id = new Map(tokenSet.map((t, i) => [t, i]));
-  const BOS = tokenSet.length;      // 88
-  const MASK_ID = tokenSet.length + 1;  // 89
-  const vocab_size = tokenSet.length + 2;  // 90 (88 glyphs + BOS + MASK)
-
-  log(`<span class="info">stories: ${docs.length}  vocab: ${vocab_size} (${tokenSet.length} glyphs + end)</span>`);
-  log(`<span class="info">embd: ${n_embd}  heads: ${n_head}  layers: ${n_layer}  block: ${block_size}</span>`);
-
-  const matrix = (nout, nin, std = 0.08) =>
-    Array.from({ length: nout }, () => Array.from({ length: nin }, () => new Value(rng.gauss(0, std))));
-
-  const state_dict = {
-    wte: matrix(vocab_size, n_embd), wpe: matrix(block_size, n_embd), lm_head: matrix(vocab_size, n_embd),
-  };
-  for (let i = 0; i < n_layer; i++) {
-    state_dict[`layer${i}.attn_wq`] = matrix(n_embd, n_embd);
-    state_dict[`layer${i}.attn_wk`] = matrix(n_embd, n_embd);
-    state_dict[`layer${i}.attn_wv`] = matrix(n_embd, n_embd);
-    state_dict[`layer${i}.attn_wo`] = matrix(n_embd, n_embd);
-    state_dict[`layer${i}.mlp_fc1`] = matrix(4 * n_embd, n_embd);
-    state_dict[`layer${i}.mlp_fc2`] = matrix(n_embd, 4 * n_embd);
-  }
-  const params = Object.values(state_dict).flat(Infinity);
-  log(`<span class="info">params: ${params.length.toLocaleString()}</span>`);
-  $('statParams').textContent = params.length.toLocaleString();
-  $('statVocab').textContent = vocab_size;
-  $('trainStatusText').textContent = 'training...';
-
-  const m_buf = new Float64Array(params.length);
-  const v_buf = new Float64Array(params.length);
-
-  function gpt(token_id, pos_id, keys, values) {
-    const tok_emb = state_dict['wte'][token_id];
-    const pos_emb = state_dict['wpe'][pos_id];
-    let x = zip(tok_emb, pos_emb).map(([t, p]) => t.add(p));
-    x = rmsnorm(x);
-    for (let li = 0; li < n_layer; li++) {
-      let x_residual = x; x = rmsnorm(x);
-      const q = linear(x, state_dict[`layer${li}.attn_wq`]);
-      const k = linear(x, state_dict[`layer${li}.attn_wk`]);
-      const v = linear(x, state_dict[`layer${li}.attn_wv`]);
-      keys[li].push(k); values[li].push(v);
-      const x_attn = [];
-      for (let h = 0; h < n_head; h++) {
-        const hs = h * head_dim;
-        const q_h = q.slice(hs, hs + head_dim);
-        const k_h = keys[li].map(ki => ki.slice(hs, hs + head_dim));
-        const v_h = values[li].map(vi => vi.slice(hs, hs + head_dim));
-        const attn_logits = k_h.map(kt => sum(zip(q_h, kt).map(([qi, ki]) => qi.mul(ki))).mul(scale));
-        const attn_weights = softmax(attn_logits);
-        for (let j = 0; j < head_dim; j++)
-          x_attn.push(sum(attn_weights.map((aw, t) => aw.mul(v_h[t][j]))));
-      }
-      x = linear(x_attn, state_dict[`layer${li}.attn_wo`]);
-      x = x.map((a, i) => a.add(x_residual[i]));
-      x_residual = x; x = rmsnorm(x);
-      x = linear(x, state_dict[`layer${li}.mlp_fc1`]);
-      x = x.map(xi => xi.relu());
-      x = linear(x, state_dict[`layer${li}.mlp_fc2`]);
-      x = x.map((a, i) => a.add(x_residual[i]));
-    }
-    return linear(x, state_dict['lm_head']);
-  }
-
-  // Training loop — supports both Autoregressive and Diffusion modes
-  const t0 = performance.now();
-  log(`<span class="info">mode: ${isDiffusion ? 'DIFFUSION (mask→unmask)' : 'AUTOREGRESSIVE (left→right)'}</span>`);
-
-  for (let step = 0; step < num_steps; step++) {
-    if (stopFlag) { log('<span class="info">stopped.</span>'); break; }
-    const doc = docs[step % docs.length];
-    const orig_tokens = doc.map(t => token_to_id.get(t)).filter(t => t !== undefined);
-    const n = Math.min(block_size, orig_tokens.length);
-    if (n < 2) continue;
-
-    const keys = Array.from({ length: n_layer }, () => []);
-    const values_kv = Array.from({ length: n_layer }, () => []);
-    const losses = [];
-
-    if (isDiffusion) {
-      // DIFFUSION: mask random positions, predict originals
-      const mask_ratio = 0.3 + rng.next() * 0.4; // 30-70% masked
-      const input_tokens = [...orig_tokens];
-      const mask_flags = new Array(n).fill(false);
-      for (let i = 0; i < n; i++) {
-        if (rng.next() < mask_ratio) {
-          input_tokens[i] = MASK_ID;
-          mask_flags[i] = true;
-        }
-      }
-      // Forward pass (causal — each position sees left context)
-      for (let pos = 0; pos < n; pos++) {
-        const logits = gpt(input_tokens[pos], pos, keys, values_kv);
-        if (mask_flags[pos]) {
-          const probs = softmax(logits);
-          losses.push(probs[orig_tokens[pos]].log().neg());
-        }
-      }
-    } else {
-      // AUTOREGRESSIVE: predict next token
-      const tokens = [BOS, ...orig_tokens, BOS];
-      const ar_n = Math.min(block_size, tokens.length - 1);
-      for (let pos = 0; pos < ar_n; pos++) {
-        const logits = gpt(tokens[pos], pos, keys, values_kv);
-        const probs = softmax(logits);
-        losses.push(probs[tokens[pos + 1]].log().neg());
-      }
-    }
-
-    if (losses.length === 0) continue;
-    const loss = sum(losses).mul(1 / losses.length);
-    loss.backward();
-    const lr_t = learning_rate * (1 - step / num_steps);
-    const bc1 = 1 - beta1 ** (step + 1), bc2 = 1 - beta2 ** (step + 1);
-    for (let i = 0; i < params.length; i++) {
-      const p = params[i];
-      m_buf[i] = beta1 * m_buf[i] + (1 - beta1) * p.grad;
-      v_buf[i] = beta2 * v_buf[i] + (1 - beta2) * p.grad ** 2;
-      p.data -= lr_t * (m_buf[i] / bc1) / (Math.sqrt(v_buf[i] / bc2) + eps_adam);
-      p.grad = 0;
-    }
-    lossHistory.push(loss.data);
-    $('statStep').textContent = `${step + 1}/${num_steps}`;
-    $('statLoss').textContent = loss.data.toFixed(3);
-    $('progressFill').style.width = ((step + 1) / num_steps * 100).toFixed(0) + '%';
-    const logInterval = Math.max(1, Math.floor(num_steps / 40));
-    if ((step + 1) % logInterval === 0 || step === 0 || step === num_steps - 1) {
-      const elapsed = ((performance.now() - t0) / 1000).toFixed(0);
-      log(`<span class="step">step ${String(step+1).padStart(5)}/${num_steps}</span>  loss <span class="${lossColor(loss.data)}">${loss.data.toFixed(4)}</span>  ${elapsed}s`);
-      drawLossChart();
-      $('trainStatusText').textContent = `training ${((step+1)/num_steps*100).toFixed(0)}%`;
-    }
-    if (step % 2 === 0) await new Promise(r => setTimeout(r, 0));
-  }
-
-  // Generate samples
-  if (!stopFlag || lossHistory.length > 10) {
-    log('<span class="info">\n--- sample stories ---</span>');
-    $('samplesGrid').innerHTML = '';
-    const token_ids = Array.from({ length: vocab_size }, (_, i) => i);
-    for (let si = 0; si < 6; si++) {
-      const keys = Array.from({ length: n_layer }, () => []);
-      const values_kv = Array.from({ length: n_layer }, () => []);
-      let tid = BOS; const sample = [];
-      for (let pos_id = 0; pos_id < block_size; pos_id++) {
-        const logits = gpt(tid, pos_id, keys, values_kv);
-        const probs = softmax(logits.map(l => l.div(+$('cfgTemp').value)));
-        tid = rng.choices(token_ids, probs.map(p => p.data));
-        if (tid === BOS) break;
-        sample.push(tokenSet[tid]);
-      }
-      const story = sample.join(' ');
-      log(`<span class="sample-line">  ${story}</span>`);
-      const tag = document.createElement('span');
-      tag.className = 'sample-tag'; tag.textContent = story;
-      $('samplesGrid').appendChild(tag);
-    }
-  }
-
-  drawLossChart();
-  const elapsed = ((performance.now() - t0) / 1000).toFixed(1);
-  const finalLoss = lossHistory[lossHistory.length - 1];
-  log(`<span class="info">done in ${elapsed}s — final loss: ${finalLoss.toFixed(4)}</span>`);
-
-  _trained = { state_dict, tokenSet, token_to_id, BOS, MASK_ID, vocab_size, n_layer, block_size, rng, gpt, isDiffusion };
-
-  // Enable Talk
-  $('btnSpeak').disabled = false;
-  $('responseHint').textContent = 'Model ready. Compose glyphs above and press Speak.';
-  $('trainStatusText').textContent = `trained — loss ${finalLoss.toFixed(2)}`;
-  $('trainDot').style.display = 'none';
-
-  running = false;
-  $('btnTrain').disabled = false;
-  $('btnStop').style.display = 'none';
-}
-
-function stopTraining() { stopFlag = true; }
-
-// ===== Inference (Talk) =====
-let inferRunning = false;
-
-async function speak() {
-  if (inferRunning || talkInput.length === 0) return;
-  if (!_plainModel && !_trained) return;
-  inferRunning = true;
-  $('btnSpeak').disabled = true;
-
-  // Pick the right model
-  const usePlain = !!_plainModel;
-  const tokenSet = usePlain ? _plainVocab.tokenSet : _trained.tokenSet;
-  const token_to_id = usePlain ? _plainVocab.token_to_id : _trained.token_to_id;
-  const BOS = usePlain ? _plainVocab.BOS : _trained.BOS;
-  const vocab_size = usePlain ? _plainVocab.vocab_size : _trained.vocab_size;
-  const maxCtx = usePlain ? _plainModel.CTX : _trained.block_size;
-  const temperature = +$('cfgTemp').value;
-
-  const validPrompt = talkInput.filter(t => token_to_id.has(t));
-  if (validPrompt.length === 0) {
-    $('responseDisplay').innerHTML = '<span style="color:var(--text-dim)">No recognized glyphs. Try clicking glyphs from the keyboard.</span>';
-    inferRunning = false;
-    $('btnSpeak').disabled = false;
-    return;
-  }
-
-  const promptIds = [BOS, ...validPrompt.map(t => token_to_id.get(t))];
-  const display = $('responseDisplay');
-  display.innerHTML = '';
-
-  // Show prompt glyphs
-  for (const t of validPrompt) {
-    const sp = document.createElement('span');
-    sp.className = 'tok-prompt';
-    sp.innerHTML = `${glyphImg(t, 28)}<span class="label">${t}</span>`;
-    sp.style.display = 'inline-flex';
-    sp.style.flexDirection = 'column';
-    sp.style.alignItems = 'center';
-    sp.style.margin = '0 3px';
-    display.appendChild(sp);
-  }
-
-  const sep = document.createElement('span');
-  sep.style.cssText = 'display:inline-block;width:2px;height:32px;background:var(--border);margin:0 8px;vertical-align:middle;';
-  display.appendChild(sep);
-
-  const cursor = document.createElement('span');
-  cursor.className = 'tok-cursor';
-  display.appendChild(cursor);
-
-  $('probBars').style.display = 'block';
-  $('probContent').innerHTML = '<div style="color:var(--text-dim);font-size:0.7rem;">processing...</div>';
-  $('inferStepLabel').textContent = '';
-
-  await new Promise(r => setTimeout(r, 50));
-
-  if (usePlain) {
-    // ── Plain model inference (pre-trained weights, fast) ──
-    _plainModel.resetKV();
-    // Feed prompt
-    for (let i = 0; i < promptIds.length - 1; i++) {
-      _plainModel.forward(promptIds[i], i);
-    }
-    let lastId = promptIds[promptIds.length - 1];
-    let posId = promptIds.length - 1;
-    const maxGen = maxCtx - promptIds.length;
-    let genCount = 0;
-
-    for (let gi = 0; gi < maxGen; gi++) {
-      const logits = _plainModel.forward(lastId, posId);
-      const { id: nextId, probs: probData } = sampleTopP(logits, vocab_size, temperature, 0.9);
-
-      genCount++;
-      $('inferStepLabel').textContent = `step ${genCount}: model predicts next glyph`;
-      showProbBarsPlain(probData, tokenSet, BOS, nextId);
-      await new Promise(r => setTimeout(r, 200));
-
-      if (nextId === BOS) {
-        cursor.remove();
-        const endSp = document.createElement('span');
-        endSp.className = 'tok-end'; endSp.textContent = '(end)';
-        display.appendChild(endSp);
-        $('inferStepLabel').textContent = `the cave spoke ${genCount} glyphs`;
-        break;
-      }
-
-      cursor.remove();
-      const sp = document.createElement('span');
-      sp.className = 'tok-gen';
-      sp.innerHTML = `${glyphImg(tokenSet[nextId], 32)}<span class="label">${tokenSet[nextId]}</span>`;
-      display.appendChild(sp);
-      display.appendChild(cursor);
-
-      lastId = nextId;
-      posId++;
-      await new Promise(r => setTimeout(r, 150));
-    }
-  } else if (_trained && _trained.isDiffusion) {
-    // ── DIFFUSION inference: MASK → iterative unmasking ──
-    const { state_dict, n_layer, block_size, rng, gpt, MASK_ID: mID } = _trained;
-    const gen_len = Math.min(12, block_size);
-    const sequence = new Array(gen_len).fill(mID);
-
-    // Fill prompt positions
-    for (let i = 0; i < validPrompt.length && i < gen_len; i++) {
-      sequence[i] = token_to_id.get(validPrompt[i]);
-    }
-
-    cursor.remove();
-
-    // Render initial state (all MASK except prompt)
-    function renderDiffState(seq) {
-      display.innerHTML = '';
-      for (let i = 0; i < seq.length; i++) {
-        const sp = document.createElement('span');
-        if (seq[i] === mID) {
-          sp.className = 'tok-gen';
-          sp.innerHTML = '<span style="display:inline-block;width:32px;height:32px;border:2px dashed var(--border);border-radius:4px;opacity:0.3;"></span><span class="label">?</span>';
-          sp.style.display = 'inline-flex'; sp.style.flexDirection = 'column'; sp.style.alignItems = 'center'; sp.style.margin = '0 3px';
-        } else if (i < validPrompt.length) {
-          sp.className = 'tok-prompt';
-          sp.innerHTML = `${glyphImg(tokenSet[seq[i]], 28)}<span class="label">${tokenSet[seq[i]]}</span>`;
-          sp.style.display = 'inline-flex'; sp.style.flexDirection = 'column'; sp.style.alignItems = 'center'; sp.style.margin = '0 3px';
-        } else {
-          sp.className = 'tok-gen';
-          sp.innerHTML = `${glyphImg(tokenSet[seq[i]], 32)}<span class="label">${tokenSet[seq[i]]}</span>`;
-        }
-        display.appendChild(sp);
-      }
-    }
-
-    renderDiffState(sequence);
-    await new Promise(r => setTimeout(r, 500));
-
-    const T_STEPS = 6;
-    const unmasksPerStep = Math.ceil((gen_len - validPrompt.length) / T_STEPS);
-
-    for (let t = 0; t < T_STEPS; t++) {
-      // Count remaining masks
-      const masked_positions = [];
-      for (let i = 0; i < gen_len; i++) if (sequence[i] === mID) masked_positions.push(i);
-      if (masked_positions.length === 0) break;
-
-      // Forward pass on current sequence
-      const keys = Array.from({ length: n_layer }, () => []);
-      const values_kv = Array.from({ length: n_layer }, () => []);
-      const predictions = [];
-
-      for (let pos = 0; pos < gen_len; pos++) {
-        const logits = gpt(sequence[pos], pos, keys, values_kv);
-        if (sequence[pos] === mID) {
-          const probs = softmax(logits.map(l => l.div(temperature)));
-          const probData = probs.map(p => p.data);
-          // Find best non-special token
-          let bestId = 0, bestP = 0;
-          for (let j = 0; j < tokenSet.length; j++) {
-            if (probData[j] > bestP) { bestP = probData[j]; bestId = j; }
-          }
-          predictions.push({ pos, bestId, confidence: bestP, probData });
-        }
-      }
-
-      // Sort by confidence, unmask top K
-      predictions.sort((a, b) => b.confidence - a.confidence);
-      const toReveal = predictions.slice(0, unmasksPerStep);
-
-      $('inferStepLabel').textContent = `diffusion step ${t + 1}/${T_STEPS}: revealing ${toReveal.length} glyphs`;
-
-      if (toReveal.length > 0) {
-        showProbBars(toReveal[0].probData, tokenSet, BOS, toReveal[0].bestId);
-      }
-
-      for (const p of toReveal) {
-        sequence[p.pos] = p.bestId;
-      }
-
-      renderDiffState(sequence);
-      await new Promise(r => setTimeout(r, 700));
-    }
-
-    $('inferStepLabel').textContent = `the cave painting appeared in ${T_STEPS} steps`;
-
-  } else {
-    // ── AUTOREGRESSIVE inference (browser-trained) ──
-    const { state_dict, n_layer, block_size, rng, gpt } = _trained;
-    const token_ids = Array.from({ length: vocab_size }, (_, i) => i);
-    const keys = Array.from({ length: n_layer }, () => []);
-    const values_kv = Array.from({ length: n_layer }, () => []);
-    for (let i = 0; i < promptIds.length - 1; i++) {
-      gpt(promptIds[i], i, keys, values_kv);
-    }
-    let lastId = promptIds[promptIds.length - 1];
-    let posId = promptIds.length - 1;
-    const maxGen = block_size - promptIds.length;
-    let genCount = 0;
-
-    for (let gi = 0; gi < maxGen; gi++) {
-      const logits = gpt(lastId, posId, keys, values_kv);
-      const probs = softmax(logits.map(l => l.div(temperature)));
-      const probData = probs.map(p => p.data);
-      const nextId = rng.choices(token_ids, probData);
-
-      genCount++;
-      $('inferStepLabel').textContent = `step ${genCount}: model predicts next glyph`;
-      showProbBars(probData, tokenSet, BOS, nextId);
-      await new Promise(r => setTimeout(r, 400));
-
-      if (nextId === BOS) {
-        cursor.remove();
-        const endSp = document.createElement('span');
-        endSp.className = 'tok-end'; endSp.textContent = '(end)';
-        display.appendChild(endSp);
-        $('inferStepLabel').textContent = `the cave spoke ${genCount} glyphs`;
-        break;
-      }
-
-      cursor.remove();
-      const sp = document.createElement('span');
-      sp.className = 'tok-gen';
-      sp.innerHTML = `${glyphImg(tokenSet[nextId], 32)}<span class="label">${tokenSet[nextId]}</span>`;
-      display.appendChild(sp);
-      display.appendChild(cursor);
-
-      lastId = nextId;
-      posId++;
-      await new Promise(r => setTimeout(r, 250));
-    }
-  }
-
-  if (cursor.parentNode) {
-    cursor.remove();
-    $('inferStepLabel').textContent += ' (max length)';
-  }
-
-  inferRunning = false;
-  $('btnSpeak').disabled = false;
-}
-
-function showProbBarsPlain(probData, tokenSet, BOS, chosenId) {
-  const indexed = Array.from(probData).map((p, i) => ({ p, i }));
-  indexed.sort((a, b) => b.p - a.p);
-  const top = indexed.slice(0, 7);
-  if (!top.find(t => t.i === chosenId)) { top.pop(); top.push(indexed.find(t => t.i === chosenId)); }
-
-  const el = $('probContent');
-  el.innerHTML = '';
-  const LOG_MIN = 1e-6;
-  const logVals = top.map(t => Math.log10(Math.max(t.p, LOG_MIN)));
-  const logMax = Math.max(...logVals);
-  const logMin = Math.min(...logVals, logMax - 4);
-
-  for (const t of top) {
-    const label = t.i === BOS ? '(end)' : tokenSet[t.i];
-    const imgHtml = t.i === BOS ? '' : glyphImg(label, 16);
-    const pct = t.p >= 0.01 ? (t.p * 100).toFixed(1) + '%' : t.p >= 0.0001 ? (t.p * 100).toFixed(3) + '%' : '<0.01%';
-    const logV = Math.log10(Math.max(t.p, LOG_MIN));
-    const barW = Math.max(1, ((logV - logMin) / (logMax - logMin) * 100)).toFixed(1);
-    const isChosen = t.i === chosenId;
-    const hue = t.i === BOS ? '0' : `${(t.i * 47) % 360}`;
-    const fillColor = isChosen ? 'var(--accent)' : `hsl(${hue}, 45%, 45%)`;
-
-    const row = document.createElement('div');
-    row.className = 'prob-row' + (isChosen ? ' prob-chosen' : '');
-    row.innerHTML = `
-      <div class="prob-token">${imgHtml}<span style="font-size:0.6rem">${label}</span></div>
-      <div class="prob-track"><div class="prob-fill" style="width:${barW}%;background:${fillColor};"></div></div>
-      <div class="prob-pct">${pct}</div>
-      ${isChosen ? '<span style="font-size:0.55rem;color:var(--accent);margin-left:0.2rem;">sampled</span>' : ''}
-    `;
-    el.appendChild(row);
-  }
-}
-
-function showProbBars(probData, tokenSet, BOS, chosenId) {
-  const indexed = probData.map((p, i) => ({ p, i }));
-  indexed.sort((a, b) => b.p - a.p);
-  const top = indexed.slice(0, 7);
-  if (!top.find(t => t.i === chosenId)) {
-    top.pop();
-    top.push(indexed.find(t => t.i === chosenId));
-  }
-
-  const el = $('probContent');
-  el.innerHTML = '';
-  const LOG_MIN = 1e-6;
-  const logVals = top.map(t => Math.log10(Math.max(t.p, LOG_MIN)));
-  const logMax = Math.max(...logVals);
-  const logMin = Math.min(...logVals, logMax - 4);
-
-  for (const t of top) {
-    const label = t.i === BOS ? '(end)' : tokenSet[t.i];
-    const imgHtml = t.i === BOS ? '' : glyphImg(label, 16);
-    const pct = t.p >= 0.01 ? (t.p * 100).toFixed(1) + '%' : t.p >= 0.0001 ? (t.p * 100).toFixed(3) + '%' : '<0.01%';
-    const logV = Math.log10(Math.max(t.p, LOG_MIN));
-    const barW = Math.max(1, ((logV - logMin) / (logMax - logMin) * 100)).toFixed(1);
-    const isChosen = t.i === chosenId;
-    const hue = t.i === BOS ? '0' : `${(t.i * 47) % 360}`;
-    const fillColor = isChosen ? 'var(--accent)' : `hsl(${hue}, 45%, 45%)`;
-
-    const row = document.createElement('div');
-    row.className = 'prob-row' + (isChosen ? ' prob-chosen' : '');
-    row.innerHTML = `
-      <div class="prob-token">${imgHtml}<span style="font-size:0.6rem">${label}</span></div>
-      <div class="prob-track"><div class="prob-fill" style="width:${barW}%;background:${fillColor};"></div></div>
-      <div class="prob-pct">${pct}</div>
-      ${isChosen ? '<span style="font-size:0.55rem;color:var(--accent);margin-left:0.2rem;">sampled</span>' : ''}
-    `;
-    el.appendChild(row);
-  }
-}
-
-// Enter key to speak
-document.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.ctrlKey && !e.shiftKey && talkInput.length > 0 && !inferRunning) {
-    speak();
-  }
-});
-
-// ===== Dataset Switch =====
-function switchDataset(mode) {
-  const ta = $('cfgData');
-  if (mode === 'glyphs') {
-    ta.value = TRAINING_DATA;
-    $('datasetInfo').textContent = TRAINING_DATA.trim().split('\n').length + ' stories, 88 glyph tokens';
-  } else if (mode === 'custom') {
-    ta.value = '';
-    ta.placeholder = 'Paste any text — one story per line. Or drop a .txt file below.';
-    $('datasetInfo').textContent = 'paste or upload';
-  }
-}
-
-// ===== File Upload & Data =====
-function handleFileDrop(e) {
-  const file = e.dataTransfer.files[0];
-  if (file) readFile(file);
-}
-function handleFileSelect(e) {
-  const file = e.target.files[0];
-  if (file) readFile(file);
-}
-function readFile(file) {
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    $('cfgData').value = e.target.result.trim();
-    log(`<span class="info">Loaded ${file.name} — ${$('cfgData').value.split('\\n').filter(l=>l.trim()).length} stories</span>`);
-  };
-  reader.readAsText(file, 'utf-8');
-}
-function loadSampleData() {
-  $('cfgData').value = TRAINING_DATA;
-  log(`<span class="info">Sample data loaded — ${TRAINING_DATA.trim().split('\\n').length} stories</span>`);
-}
-
-// ===== Init =====
-async function initApp() {
-  renderAlphabet();
-  renderKeyboard();
-  renderSuggestions();
-  renderInput();
-
-  // Try loading pre-trained weights
-  const loaded = await tryLoadPreTrained();
-  if (!loaded) {
-    $('trainStatusText').textContent = 'no pre-trained weights — use Training Engine below';
-    $('responseHint').textContent = 'Train a model first (open Training Engine below), or serve from a web server to load pre-trained weights.';
-    $('trainDetails').setAttribute('open', '');
-  }
-}
-
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initApp);
-} else {
-  initApp();
-}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',initApp);else initApp();
 </script>
 </body>
 </html>
