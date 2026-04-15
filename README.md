@@ -180,13 +180,21 @@ A GPT-class transformer learns patterns in the compressed glyph space. Two train
 
 The cave learns from every conversation. No backprop — low-rank Hebbian LoRA adapters on Q and V projections update after each generation. Neurons that fire together wire together.
 
-### 4. Symbol Emergence
+### 4. Symbol Emergence + Natural Selection
 
-When two glyphs appear together often enough (co-occurrence > 0.85), the model proposes a new combined symbol. One new sign per 100 interactions — disciplined, like language evolution under pressure. The cave painter invents new signs when the old ones aren't enough.
+Birth is free — survival is not. When two glyphs co-occur strongly (>0.85), a new combined symbol is born. But it must be used 20 times within 200 interactions or it dies. Depth cap: 3 levels of combination, then freeze as a new primitive (like "breakfast" lost "break+fast").
 
-### 5. Async Self-Learning
+We fed it Dracula. 2244 sentences devoured. 8 symbols born, 8 died. Evolution works.
 
-A background thread watches the `feed/` directory. Drop any `.txt` file there — the model devours it through the semantic tokenizer and updates its Hebbian weights autonomously. No button press, no human in the loop. The cave reads while you sleep.
+### 5. Async Self-Learning (SPA Sentence Phonons)
+
+A background thread watches the `feed/` directory. Drop any `.txt` file there — the model splits it into sentences (phonons, per [SPA from Q](https://github.com/ariannamethod/q)), runs each through the semantic tokenizer, and updates Hebbian weights autonomously. Passive reading = 0.3x signal, V-only. The cave reads while you sleep.
+
+```
+cp dracula.txt feed/
+  [learner] consuming dracula.txt (854K)...
+  [learner] dracula.txt → 2244 sentences learned
+```
 
 ### 6. BE — The Super-Verb
 
@@ -208,12 +216,21 @@ make cavellman                     # build with BLAS + pthreads
 ══════════════════════════════════════════════════════════
   caveLLMan — self-evolving hieroglyphic language model
 ══════════════════════════════════════════════════════════
-  hebbian: rank=8, lr=0.0010
-  emergence: threshold=0.85, window=100
+  hebbian: rank=4, lr=0.0010
+  emergence: threshold=0.85, survival=20/200
   [learner] watching feed/ for .txt files
 
-▸ light fire water
-  cave: me light after always
+▸ dark fear cold
+  cave: me seek path
+
+▸ man woman child
+  cave: love home always
+
+▸ death spirit fire
+  cave: and BE change
+
+  *** SYMBOL EMERGED: dark+cold (depth=1, strength=0.999) ***
+  *** SYMBOL DIED: dark+cold (used 0/20 times in 200 interactions) ***
 
 ▸ ?              — list all glyphs (base + emerged)
 ▸ stats          — co-occurrence, emergence status
@@ -221,7 +238,7 @@ make cavellman                     # build with BLAS + pthreads
 ▸ quit           — save and exit
 ```
 
-Drop `.txt` files into `feed/` — the cave devours them in the background.
+Drop `.txt` files into `feed/` — Dracula, Frankenstein, anything. The cave devours them sentence by sentence.
 
 ### Browser (no install)
 
@@ -257,12 +274,12 @@ node tests/test_semantic_tokenizer.js    # 35 tests
                                                    ▼
                               ┌──────────────────────────────┐
                               │  Transformer + Hebbian LoRA   │
-                              │  rank=8 on Q,V projections    │
-                              │  learns from every response   │
+                              │  rank=4 on Q,V projections    │
+                              │  prediction error signal       │
                               ├──────────────────────────────┤
-                              │  Co-occurrence matrix          │
-                              │  → symbol emergence (>0.85)    │
-                              │  → 1 new glyph / 100 talks    │
+                              │  Co-occurrence → emergence     │
+                              │  Born free, must survive 20/200│
+                              │  Depth cap 3 → freeze          │
                               └──────────────────────────────┘
                                            │
                                            ▼
@@ -279,9 +296,12 @@ node tests/test_semantic_tokenizer.js    # 35 tests
 | Base alphabet | 88 hieroglyphs |
 | Max emerged | 64 new symbols |
 | Semantic map | 2060 English words |
-| Hebbian rank | 8 (LoRA on Q, V) |
+| Hebbian rank | 4 (LoRA on Q, V) |
+| Hebbian signal | prediction error [0.1, 2.0] |
 | Emergence threshold | 0.85 co-occurrence |
-| Discipline window | 100 interactions |
+| Survival | 20 uses in 200 interactions or die |
+| Depth cap | 3 levels, then freeze as primitive |
+| Sentence splitter | SPA phonons (.!?) |
 | C model (small) | 472K params |
 | Browser model | ~31K params |
 | Engine | [notorch](https://github.com/ariannamethod/notorch) (pure C, BLAS) |
@@ -289,4 +309,4 @@ node tests/test_semantic_tokenizer.js    # 35 tests
 
 ## Credits
 
-88-glyph alphabet inspired by Genevieve von Petzinger's 32 cave signs. Originally forked from [emojiGPT](https://github.com/MattWenJun/emojiGPT) by @MattWenJun. Rebuilt from scratch: semantic tokenizer, Hebbian plasticity, symbol emergence, async self-learning, diffusion engine, cave-painting SVG hieroglyphs, C engine on [notorch](https://github.com/ariannamethod/notorch) — by [Arianna Method](https://github.com/ariannamethod).
+88-glyph alphabet inspired by Genevieve von Petzinger's 32 cave signs. Originally forked from [emojiGPT](https://github.com/MattWenJun/emojiGPT) by @MattWenJun (who forked Karpathy's [microgpt.py](https://gist.github.com/karpathy/8627fe009c40f57531cb18360106ce95)). Rebuilt from scratch: semantic tokenizer, Hebbian plasticity, symbol emergence with natural selection, SPA sentence phonons, async self-learning, diffusion engine, cave-painting SVG hieroglyphs, C engine on [notorch](https://github.com/ariannamethod/notorch) — by [Arianna Method](https://github.com/ariannamethod).
