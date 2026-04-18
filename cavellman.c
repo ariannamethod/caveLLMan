@@ -12,7 +12,7 @@
  * Run:   ./cavellman --weights weights/cavellman_v3.bin --preset small
  *
  * Copyright (C) 2026 Arianna Method contributors
- * SPDX-License-Identifier: LGPL-3.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 #include "notorch.h"
