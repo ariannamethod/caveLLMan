@@ -1,7 +1,7 @@
 // notorch.c — PyTorch replacement in pure C
 // Extracted from ariannamethod.ai/core/ (Arianna Method)
 // Copyright (C) 2026 Oleg Ataeff & Arianna Method contributors
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // fuck torch
 
 #include "notorch.h"

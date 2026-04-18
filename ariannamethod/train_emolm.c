@@ -10,7 +10,7 @@
  * Default: data/emoji_stories.txt, 2000 steps, lr=3e-4
  *
  * Copyright (C) 2026 Arianna Method contributors
- * SPDX-License-Identifier: LGPL-3.0-or-later
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 #include "notorch.h"
