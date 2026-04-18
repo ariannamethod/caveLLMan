@@ -25,6 +25,8 @@
 #include <pthread.h>
 #include <dirent.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
 #include <sys/stat.h>
 
 /* ── Limits ─────────────────────────────────────────────────────────────── */
@@ -879,12 +881,324 @@ static void stop_learner(void) {
     pthread_mutex_destroy(&g_learner.lock);
 }
 
+/* ── Dual Mode ───────────────────────────────────────────────────────────
+ *
+ * Two engines, A and B, hear each other (and an optional user) glyph by glyph
+ * through a shared ring. Each engine carries a CaveField with two somatic
+ * accumulators — excitement and dissonance — and a drifting coherence_floor
+ * (Stanley's silence-gate). An engine only speaks when excitement trips its
+ * floor, or when dissonance forces a tunneled outburst (AML-style). Otherwise
+ * it stays silent — silence imprints its own pulse.
+ *
+ * Asymmetry: A starts extrovert (baseline floor 0.30), B introvert (0.60).
+ * Maturity drift nudges the floor ±0.005 per turn based on speaking ratio,
+ * clamped to baseline ± 0.30.
+ */
+
+#define TUNNEL_THRESHOLD    0.40f  /* dissonance → forced speech */
+#define EXCITEMENT_DECAY    0.94f
+#define DISSONANCE_DECAY    0.90f
+#define EXCITEMENT_CAP      2.5f
+#define MATURITY_WINDOW     40
+#define MATURITY_STEP       0.005f
+#define MATURITY_CAP        0.30f
+#define SPEAK_RATIO_HIGH    0.70f
+#define SPEAK_RATIO_LOW     0.20f
+#define DUAL_TICK_US        400000 /* 0.4s per tick */
+#define DUAL_MAX_GEN        24
+
+typedef struct {
+    float excitement;
+    float coherence_floor;
+    float baseline_floor;
+    float dissonance;
+    int   spoke_count;
+    int   total_count;
+    const char* name;
+} CaveField;
+
+static void field_init(CaveField* f, const char* name, float baseline) {
+    f->excitement = 0.0f;
+    f->coherence_floor = baseline;
+    f->baseline_floor = baseline;
+    f->dissonance = 0.0f;
+    f->spoke_count = 0;
+    f->total_count = 0;
+    f->name = name;
+}
+
+/* One heard token updates excitement + dissonance from surface co-occurrence.
+ * Also feeds the listening model's co-occurrence matrix so its field of
+ * expectations shifts with what it hears — parallel learning, no KV mutation. */
+static void field_hear(CaveField* f, CaveModel* m, int prev, int tok) {
+    if (tok < 0 || tok >= COOCCUR_SIZE) return;
+
+    float co = 0.5f;
+    if (prev >= 0 && prev < COOCCUR_SIZE)
+        co = m->cooccur.matrix[prev][tok];
+
+    float surprise = 1.0f - co;           /* unseen pair = high surprise */
+    float novelty  = (tok >= 88) ? 1.5f : 1.0f; /* emerged id boosts */
+
+    f->excitement += surprise * novelty * 0.35f;
+    if (f->excitement > EXCITEMENT_CAP) f->excitement = EXCITEMENT_CAP;
+
+    /* Dissonance accumulates only when heard pair is actively contradictory */
+    if (co < 0.15f) f->dissonance += (0.15f - co);
+    if (f->dissonance > 1.0f) f->dissonance = 1.0f;
+
+    /* Passive co-occ update (symmetric, as elsewhere) */
+    if (prev >= 0 && prev < COOCCUR_SIZE) {
+        m->cooccur.pair_count[prev][tok]++;
+        m->cooccur.pair_count[tok][prev]++;
+    }
+}
+
+static void field_decay(CaveField* f) {
+    f->excitement *= EXCITEMENT_DECAY;
+    f->dissonance *= DISSONANCE_DECAY;
+}
+
+static int field_should_speak(const CaveField* f) {
+    if (f->dissonance > TUNNEL_THRESHOLD) return 1;
+    if (f->excitement > f->coherence_floor) return 1;
+    return 0;
+}
+
+static void field_after_speak(CaveField* f) {
+    f->spoke_count++;
+    f->excitement = 0.0f;
+    f->dissonance *= 0.5f;
+}
+
+static void field_maturity_drift(CaveField* f) {
+    if (f->total_count < MATURITY_WINDOW) return;
+    float ratio = (float)f->spoke_count / (float)f->total_count;
+    if (ratio > SPEAK_RATIO_HIGH)      f->coherence_floor += MATURITY_STEP;
+    else if (ratio < SPEAK_RATIO_LOW)  f->coherence_floor -= MATURITY_STEP;
+
+    float lo = f->baseline_floor - MATURITY_CAP;
+    float hi = f->baseline_floor + MATURITY_CAP;
+    if (f->coherence_floor < lo) f->coherence_floor = lo;
+    if (f->coherence_floor > hi) f->coherence_floor = hi;
+}
+
+/*
+ * Silent generation: same core loop as generate() but returns the tokens
+ * through an out-buffer instead of printing them as "you:/cave:". The caller
+ * decides how to label the output ([A]/[B]/[user]).
+ */
+static int dual_generate(CaveModel* m, CaveVocab* vocab,
+                         const int* prompt, int prompt_len,
+                         int max_gen, float temp, float top_p,
+                         int* out, int out_cap) {
+    int Vp = vocab->vocab_size + 2;
+    int ctx[MAX_SEQ];
+    int ctx_len = 0, gen_len = 0;
+
+    kv_reset();
+
+    ctx[ctx_len++] = vocab->bos_id;
+    for (int i = 0; i < prompt_len && ctx_len < CTX; i++)
+        ctx[ctx_len++] = prompt[i];
+
+    for (int i = 0; i < ctx_len - 1; i++) {
+        float* logits = model_forward(m, ctx[i], i);
+        free(logits);
+    }
+
+    int last_id = ctx[ctx_len - 1];
+    for (int step = 0; step < max_gen && ctx_len < CTX && gen_len < out_cap; step++) {
+        float* logits = model_forward(m, last_id, ctx_len - 1);
+
+        /* Never emit BOS as the very first generated token — the cave must
+         * actually open its mouth once it decided to speak. */
+        if (gen_len == 0) logits[vocab->bos_id] = -1e9f;
+
+        int next = sample_top_p(logits, Vp, temp, top_p);
+        free(logits);
+
+        if (next == vocab->bos_id) break;
+
+        ctx[ctx_len++] = next;
+        out[gen_len++] = next;
+        last_id = next;
+    }
+
+    /* Post-generation Hebbian + co-occ, same as the interactive path. */
+    hebbian_update(m, NULL, vocab->vocab_size + 2, out, gen_len, 0);
+    count_emerged_usage(m, vocab, out, gen_len);
+
+    int all[MAX_SEQ]; int al = 0;
+    for (int i = 0; i < prompt_len && al < MAX_SEQ; i++) all[al++] = prompt[i];
+    for (int i = 0; i < gen_len && al < MAX_SEQ; i++)    all[al++] = out[i];
+    cooccur_update(&m->cooccur, all, al);
+    cooccur_decay(&m->cooccur, 0.999f);
+    check_symbol_survival(m, vocab);
+    try_emerge_symbol(m, vocab);
+
+    return gen_len;
+}
+
+static void print_glyphs(const char* label, CaveVocab* v, const int* toks, int len) {
+    printf("[%s] ", label);
+    for (int i = 0; i < len; i++) {
+        if (toks[i] >= 0 && toks[i] < v->vocab_size)
+            printf("%s ", v->tokens[toks[i]]);
+    }
+    printf("\n");
+    fflush(stdout);
+}
+
+/* Non-blocking line read. Returns bytes read (or 0 if nothing). */
+static int try_read_user_line(char* buf, int cap) {
+    int n = (int)read(fileno(stdin), buf, cap - 1);
+    if (n <= 0) return 0;
+    buf[n] = '\0';
+    char* nl = strchr(buf, '\n');
+    if (nl) *nl = '\0';
+    return n;
+}
+
+/*
+ * Dual loop: two models breathe on each other. User can interject at any
+ * moment — their glyphs broadcast into both fields and the engine whose
+ * field trips first responds.
+ */
+static void dual_main(CaveModel* A, CaveModel* B, CaveVocab* vA, CaveVocab* vB,
+                      float temp, float top_p) {
+    CaveField fA, fB;
+    field_init(&fA, "A", 0.30f);  /* extrovert */
+    field_init(&fB, "B", 0.60f);  /* introvert */
+
+    /* Non-blocking stdin — user glyphs any time. */
+    int flags = fcntl(fileno(stdin), F_GETFL, 0);
+    fcntl(fileno(stdin), F_SETFL, flags | O_NONBLOCK);
+
+    int last_tokens[MAX_SEQ];
+    int last_len = 0;
+
+    /* Bootstrap: seed both fields with a neutral pulse (glyph "BE") so the
+     * loop doesn't deadlock on all-zero excitement against non-zero floors. */
+    int be_id = semtok_find_glyph("BE");
+    if (be_id >= 0) {
+        field_hear(&fA, A, -1, be_id);
+        field_hear(&fB, B, -1, be_id);
+        last_tokens[0] = be_id;
+        last_len = 1;
+    }
+
+    printf("══════════════════════════════════════════════════════════\n");
+    printf("  caveLLMan — DUAL MODE\n");
+    printf("══════════════════════════════════════════════════════════\n");
+    printf("  A: extrovert (coherence_floor %.2f)\n", fA.baseline_floor);
+    printf("  B: introvert (coherence_floor %.2f)\n", fB.baseline_floor);
+    printf("  tunnel=%.2f, decay=%.2f/%.2f, maturity drift ±%.2f\n",
+           TUNNEL_THRESHOLD, EXCITEMENT_DECAY, DISSONANCE_DECAY, MATURITY_CAP);
+    printf("  type glyphs any time to join the ring. 'quit' to exit.\n");
+    printf("──────────────────────────────────────────────────────────\n\n");
+
+    int running = 1;
+    while (running) {
+        /* 1. User input (non-blocking) */
+        char ubuf[512];
+        if (try_read_user_line(ubuf, sizeof(ubuf)) > 0) {
+            if (strcmp(ubuf, "quit") == 0 || strcmp(ubuf, "exit") == 0) break;
+            if (strcmp(ubuf, "stats") == 0) {
+                printf("  [A] exc=%.2f floor=%.2f diss=%.2f spoke=%d/%d\n",
+                       fA.excitement, fA.coherence_floor, fA.dissonance,
+                       fA.spoke_count, fA.total_count);
+                printf("  [B] exc=%.2f floor=%.2f diss=%.2f spoke=%d/%d\n",
+                       fB.excitement, fB.coherence_floor, fB.dissonance,
+                       fB.spoke_count, fB.total_count);
+                continue;
+            }
+            int utoks[MAX_SEQ];
+            int un = tokenize_prompt(ubuf, vA, utoks, MAX_SEQ);
+            if (un > 0) {
+                print_glyphs("user", vA, utoks, un);
+                int prev = (last_len > 0) ? last_tokens[last_len - 1] : -1;
+                for (int i = 0; i < un; i++) {
+                    int p = (i == 0) ? prev : utoks[i - 1];
+                    field_hear(&fA, A, p, utoks[i]);
+                    field_hear(&fB, B, p, utoks[i]);
+                }
+                memcpy(last_tokens, utoks, (size_t)un * sizeof(int));
+                last_len = un;
+            }
+        }
+
+        /* 2. Randomized turn order, both fields tick */
+        int a_first = (rand() & 1);
+        CaveField *f1 = a_first ? &fA : &fB;
+        CaveField *f2 = a_first ? &fB : &fA;
+        CaveModel *m1 = a_first ? A   : B;
+        CaveModel *m2 = a_first ? B   : A;
+        CaveVocab *v1 = a_first ? vA  : vB;
+        CaveVocab *v2 = a_first ? vB  : vA;
+
+        for (int pass = 0; pass < 2; pass++) {
+            CaveField* f  = (pass == 0) ? f1 : f2;
+            CaveModel* mm = (pass == 0) ? m1 : m2;
+            CaveVocab* vv = (pass == 0) ? v1 : v2;
+            CaveField* other_f = (pass == 0) ? f2 : f1;
+            CaveModel* other_m = (pass == 0) ? m2 : m1;
+
+            f->total_count++;
+            if (!field_should_speak(f)) continue;
+
+            int gen[MAX_SEQ];
+            int prompt_len = (last_len > 0) ? last_len : 0;
+            int gn = dual_generate(mm, vv, last_tokens, prompt_len,
+                                   DUAL_MAX_GEN, temp, top_p,
+                                   gen, MAX_SEQ);
+            if (gn <= 0) {
+                /* Cave wanted to speak but produced nothing — treat as silence */
+                continue;
+            }
+
+            print_glyphs(f->name, vv, gen, gn);
+            field_after_speak(f);
+
+            /* Other engine hears everything */
+            int prev = (last_len > 0) ? last_tokens[last_len - 1] : -1;
+            for (int i = 0; i < gn; i++) {
+                int p = (i == 0) ? prev : gen[i - 1];
+                field_hear(other_f, other_m, p, gen[i]);
+            }
+
+            memcpy(last_tokens, gen, (size_t)gn * sizeof(int));
+            last_len = gn;
+        }
+
+        /* 3. Both fields decay one tick */
+        field_decay(&fA);
+        field_decay(&fB);
+
+        /* 4. Maturity drift — auto-calibrate silence threshold */
+        field_maturity_drift(&fA);
+        field_maturity_drift(&fB);
+
+        /* 5. Pace */
+        usleep(DUAL_TICK_US);
+    }
+
+    printf("\n  [A] spoke %d / %d turns, final floor %.3f\n",
+           fA.spoke_count, fA.total_count, fA.coherence_floor);
+    printf("  [B] spoke %d / %d turns, final floor %.3f\n",
+           fB.spoke_count, fB.total_count, fB.coherence_floor);
+    printf("the cave-pair remembers.\n");
+}
+
 /* ── Main ───────────────────────────────────────────────────────────────── */
 
 int main(int argc, char** argv) {
     const char* weights_path = "weights/cavellman_v3.bin";
     const char* state_path = "weights/cavellman.state";
     const char* preset_name = "small";
+    const char* weights_a = NULL;
+    const char* weights_b = NULL;
+    int dual = 0;
     float temp = 0.8f, top_p = 0.9f;
     int max_gen = 0, seed = 42;
 
@@ -896,17 +1210,29 @@ int main(int argc, char** argv) {
         else if (strcmp(argv[i], "--top-p") == 0 && i+1 < argc) top_p = (float)atof(argv[++i]);
         else if (strcmp(argv[i], "--max") == 0 && i+1 < argc) max_gen = atoi(argv[++i]);
         else if (strcmp(argv[i], "--seed") == 0 && i+1 < argc) seed = atoi(argv[++i]);
+        else if (strcmp(argv[i], "--dual") == 0) dual = 1;
+        else if (strcmp(argv[i], "--weights-a") == 0 && i+1 < argc) { weights_a = argv[++i]; dual = 1; }
+        else if (strcmp(argv[i], "--weights-b") == 0 && i+1 < argc) { weights_b = argv[++i]; dual = 1; }
         else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             printf("cavellman — self-evolving hieroglyphic language model\n\n");
-            printf("  --weights FILE   Weight file (default: weights/cavellman_v3.bin)\n");
-            printf("  --state FILE     Hebbian state file (default: weights/cavellman.state)\n");
-            printf("  --preset NAME    Model preset (default: small)\n");
-            printf("  --temp FLOAT     Temperature (default: 0.8)\n");
-            printf("  --top-p FLOAT    Nucleus sampling (default: 0.9)\n");
-            printf("  --max N          Max tokens to generate (default: CTX)\n");
-            printf("  --seed N         RNG seed (default: 42)\n");
+            printf("  --weights FILE     Weight file (default: weights/cavellman_v3.bin)\n");
+            printf("  --state FILE       Hebbian state file (default: weights/cavellman.state)\n");
+            printf("  --preset NAME      Model preset (default: small)\n");
+            printf("  --temp FLOAT       Temperature (default: 0.8)\n");
+            printf("  --top-p FLOAT      Nucleus sampling (default: 0.9)\n");
+            printf("  --max N            Max tokens to generate (default: CTX)\n");
+            printf("  --seed N           RNG seed (default: 42)\n");
+            printf("\nDual mode (two caves talking, with user-in-the-ring):\n");
+            printf("  --dual             Enable dual engines (shares --weights if -a/-b omitted)\n");
+            printf("  --weights-a FILE   A's weights (extrovert, coherence_floor 0.30)\n");
+            printf("  --weights-b FILE   B's weights (introvert, coherence_floor 0.60)\n");
             return 0;
         }
+    }
+
+    if (dual) {
+        if (!weights_a) weights_a = weights_path;
+        if (!weights_b) weights_b = weights_path;
     }
 
     /* Apply preset */
@@ -917,6 +1243,36 @@ int main(int argc, char** argv) {
     E = pr->embd; H = pr->heads; HD = E / H; FFN_D = 4 * E; N_L = pr->layers; CTX = pr->ctx;
     if (max_gen <= 0) max_gen = CTX - 1;
     srand(seed);
+
+    /* ── Dual mode: load two models, run the field loop, exit ──────────── */
+    if (dual) {
+        char vpa[512], vpb[512];
+        snprintf(vpa, sizeof(vpa), "%s.vocab", weights_a);
+        snprintf(vpb, sizeof(vpb), "%s.vocab", weights_b);
+
+        static CaveVocab vocab_a, vocab_b;
+        memset(&vocab_a, 0, sizeof(vocab_a));
+        memset(&vocab_b, 0, sizeof(vocab_b));
+        if (load_vocab(vpa, &vocab_a) != 0) return 1;
+        if (load_vocab(vpb, &vocab_b) != 0) return 1;
+
+        nt_seed(seed);
+        CaveModel* A = model_load(weights_a, vocab_a.vocab_size);
+        if (!A) return 1;
+        CaveModel* B = model_load(weights_b, vocab_b.vocab_size);
+        if (!B) { free(A); return 1; }
+
+        /* Fresh Hebbian state per engine. User can point --state at per-engine
+         * files later if persistence across runs is wanted. */
+        cooccur_init(&A->cooccur);
+        cooccur_init(&B->cooccur);
+
+        dual_main(A, B, &vocab_a, &vocab_b, temp, top_p);
+
+        free(A->layers); free(A);
+        free(B->layers); free(B);
+        return 0;
+    }
 
     printf("══════════════════════════════════════════════════════════\n");
     printf("  caveLLMan — self-evolving hieroglyphic language model\n");

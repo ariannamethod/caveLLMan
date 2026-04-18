@@ -200,6 +200,23 @@ cp data/dracula.txt feed/
 
 One circle. **BE** turns any noun into a verb: `BE fear` = to be afraid. `BE love` = to love. `BE fire` = to burn. One symbol that doubles the expressiveness of the entire language.
 
+### 7. Dual Mode — two caves talking
+
+`--dual` runs two engines, **A** (extrovert, coherence_floor 0.30) and **B** (introvert, 0.60), on top of a single `CaveField` apiece: an **excitement** accumulator (surprise × novelty), a **dissonance** meter (for unexpected pairs), and a drifting silence threshold à la [Stanley](https://github.com/ariannamethod/stanley)'s silence-gate. An engine speaks only when its excitement trips the floor — or when dissonance > 0.40 forces a tunneled outburst, AML-style. Otherwise it stays silent, and the silence itself is data. **Maturity drift** (±0.005 per turn, clamped ±0.30) auto-calibrates the floor: if an engine hogs the ring (> 70% speaking), its gate tightens; if it barely speaks (< 20%), it loosens.
+
+You can join the ring any time — glyphs you type broadcast to both fields, and whoever trips first answers. Sometimes neither answers. That's allowed.
+
+```
+[user] dark fear cold man speak
+[B] me see
+[A] and you and me BE
+[B] me have me
+[A] have
+[user] love woman child
+[A] man me have and speak me have me body and me have up me have woman
+[B] woman BE me have woman
+```
+
 ---
 
 ## Quick Start
@@ -210,6 +227,7 @@ One circle. **BE** turns any noun into a verb: `BE fear` = to be afraid. `BE lov
 make cavellman                     # build with BLAS + pthreads
 
 ./cavellman --weights weights/cavellman_v3.bin --preset small
+./cavellman --dual --weights weights/cavellman_v3.bin  # two caves talking
 ```
 
 ```
