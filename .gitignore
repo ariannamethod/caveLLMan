@@ -16,3 +16,4 @@ feed/
 
 # combined corpus is generated, not committed
 data/corpus.txt
+data/corpus_big.txt

@@ -240,7 +240,9 @@ Seven symbols emerged in 59 ticks (`not+BE`, `cold+man`, `man+me`, `and+me`, `me
 make cavellman                     # build with BLAS + pthreads
 
 ./cavellman --weights weights/cavellman_v3.bin --preset small
-./cavellman --dual --weights weights/cavellman_v3.bin  # two caves talking
+./cavellman --preset medium --weights weights/cavellman_medium.bin   # medium, richer corpus
+./cavellman --dual --weights weights/cavellman_v3.bin                # two caves talking
+./cavellman --dual --preset medium --weights weights/cavellman_medium.bin  # dual medium
 ```
 
 ```
@@ -333,7 +335,8 @@ node tests/test_semantic_tokenizer.js    # 35 tests
 | Survival | parent co-occ ≥ 0.525 (or ≥ 5 uses) within 500 interactions |
 | Depth cap | 5 levels, then freeze as primitive |
 | Sentence splitter | SPA phonons (.!?) |
-| C model (small) | 472K params |
+| C model (small)  | 472K params |
+| C model (medium) | 826K params |
 | Browser model | ~31K params |
 | Engine | [notorch](https://github.com/ariannamethod/notorch) (pure C, BLAS) |
 | State file | `weights/cavellman.state` |

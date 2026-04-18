@@ -24,7 +24,7 @@
 
 #define MAX_VOCAB   256     /* 88 base glyphs + room for emerged symbols */
 #define MAX_SEQ     128     /* block_size — covers all presets */
-#define MAX_STORIES 32000
+#define MAX_STORIES 100000  /* raised for big corpora (~13MB fineweb+classics) */
 #define MAX_STORY_LEN 64
 
 /* Model architecture — configurable at runtime */
