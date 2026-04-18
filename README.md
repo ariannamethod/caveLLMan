@@ -206,16 +206,29 @@ One circle. **BE** turns any noun into a verb: `BE fear` = to be afraid. `BE lov
 
 You can join the ring any time — glyphs you type broadcast to both fields, and whoever trips first answers. Sometimes neither answers. That's allowed.
 
+Shipped weights include two distinct voices — `cavellman_A.bin` trained on Dracula only (15K steps, seed 42, first-person `me`-dominated) and `cavellman_B.bin` trained on Frankenstein only (15K steps, seed 123, formal epistolary). Run the ring with both:
+
+```bash
+./cavellman --dual --weights-a weights/cavellman_A.bin \
+                   --weights-b weights/cavellman_B.bin
 ```
-[user] dark fear cold man speak
-[B] me see
-[A] and you and me BE
-[B] me have me
-[A] have
+
+```
+[B] BE not
+[A] one BE and
+[B] me man have
+[A] me and
+[A] after me BE
+[B] and me
 [user] love woman child
-[A] man me have and speak me have me body and me have up me have woman
-[B] woman BE me have woman
+[B] woman and
+[A] good and me have woman BE woman me have
+[B] me
+[B] have me and me
+[A] BE see
 ```
+
+Seven symbols emerged in 59 ticks (`not+BE`, `cold+man`, `man+me`, `and+me`, `me+BE`, `me+have`). Maturity drifted: A 0.30 → 0.20, B 0.60 → 0.50 — both loosened their gates because the ring stayed sparse.
 
 ---
 
