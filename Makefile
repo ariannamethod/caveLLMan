@@ -64,10 +64,14 @@ cavellman: cavellman.c ariannamethod/notorch.c ariannamethod/notorch.h
 	$(CC) $(CFLAGS) $(BLAS_FLAGS) -Iariannamethod -o cavellman cavellman.c ariannamethod/notorch.c -lm -lpthread
 	@echo "Compiled: cavellman (Hebbian + async learner + $(BLAS_NAME))"
 
+cavellman-cpu: cavellman.c ariannamethod/notorch.c ariannamethod/notorch.h
+	$(CC) $(CFLAGS) -Iariannamethod -o cavellman cavellman.c ariannamethod/notorch.c -lm -lpthread
+	@echo "Compiled: cavellman (Hebbian + async learner, no BLAS)"
+
 # CPU without BLAS (portable fallback) — builds both binaries
-cpu: train_emolm.c infer_emolm.c notorch.c notorch.h
-	$(CC) $(CFLAGS) -o train_emolm train_emolm.c notorch.c -lm
-	$(CC) $(CFLAGS) -o infer_emolm infer_emolm.c notorch.c -lm
+cpu:
+	$(CC) $(CFLAGS) -Iariannamethod -o train_emolm ariannamethod/train_emolm.c ariannamethod/notorch.c -lm
+	$(CC) $(CFLAGS) -Iariannamethod -o infer_emolm infer_emolm.c ariannamethod/notorch.c -lm
 	@echo "Compiled: train_emolm + infer_emolm (CPU, no BLAS)"
 
 # ── Tests ────────────────────────────────────────────────────────────────
