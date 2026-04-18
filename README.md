@@ -182,18 +182,18 @@ The cave learns from every conversation. No backprop — low-rank Hebbian LoRA a
 
 ### 4. Symbol Emergence + Natural Selection
 
-Birth is free — survival is not. When two glyphs co-occur strongly (>0.85), a new combined symbol is born. But it must be used 20 times within 200 interactions or it dies. Depth cap: 3 levels of combination, then freeze as a new primitive (like "breakfast" lost "break+fast").
+Birth is free — survival is not. When two glyphs co-occur strongly (>0.75), a new combined symbol is born. It survives as long as the parent pair keeps co-occurring (current strength ≥ 0.525, i.e. 0.7 × the birth threshold); when the pattern fades, the symbol dies. Any actual usage during generation also extends life. Depth cap: 5 levels, then freeze as a new primitive (like "breakfast" lost "break+fast").
 
-We fed it Dracula. 2244 sentences devoured. 8 symbols born, 8 died. Evolution works.
+We fed it Dracula via `feed/` — 7029 sentences devoured (SPA .!? split). Twelve symbols were born; nine died when their parent co-occurrence decayed below 0.525; three are still alive: `and+me` (0.999), `and+BE` (0.778), `me+BE` (0.715) — exactly the patterns a first-person gothic novel would reinforce. Evolution works.
 
 ### 5. Async Self-Learning (SPA Sentence Phonons)
 
 A background thread watches the `feed/` directory. Drop any `.txt` file there — the model splits it into sentences (phonons, per [SPA from Q](https://github.com/ariannamethod/q)), runs each through the semantic tokenizer, and updates Hebbian weights autonomously. Passive reading = 0.3x signal, V-only. The cave reads while you sleep.
 
 ```
-cp dracula.txt feed/
-  [learner] consuming dracula.txt (854K)...
-  [learner] dracula.txt → 2244 sentences learned
+cp data/dracula.txt feed/
+  [learner] consuming dracula.txt (890K)...
+  [learner] dracula.txt → 7029 sentences learned
 ```
 
 ### 6. BE — The Super-Verb
@@ -217,7 +217,7 @@ make cavellman                     # build with BLAS + pthreads
   caveLLMan — self-evolving hieroglyphic language model
 ══════════════════════════════════════════════════════════
   hebbian: rank=4, lr=0.0010
-  emergence: threshold=0.85, survival=20/200
+  emergence: threshold=0.75, window=50
   [learner] watching feed/ for .txt files
 
 ▸ dark fear cold
@@ -294,13 +294,13 @@ node tests/test_semantic_tokenizer.js    # 35 tests
 | Metric | Value |
 |--------|-------|
 | Base alphabet | 88 hieroglyphs |
-| Max emerged | 64 new symbols |
+| Max emerged | 128 new symbols |
 | Semantic map | 2060 English words |
 | Hebbian rank | 4 (LoRA on Q, V) |
 | Hebbian signal | prediction error [0.1, 2.0] |
-| Emergence threshold | 0.85 co-occurrence |
-| Survival | 20 uses in 200 interactions or die |
-| Depth cap | 3 levels, then freeze as primitive |
+| Emergence threshold | 0.75 co-occurrence |
+| Survival | parent co-occ ≥ 0.525 (or ≥ 5 uses) within 500 interactions |
+| Depth cap | 5 levels, then freeze as primitive |
 | Sentence splitter | SPA phonons (.!?) |
 | C model (small) | 472K params |
 | Browser model | ~31K params |

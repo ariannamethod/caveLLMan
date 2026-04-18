@@ -31,13 +31,13 @@
 
 #define MAX_VOCAB       256     /* 88 base + room for emerged symbols */
 #define MAX_SEQ         128
-#define MAX_EMERGED     64      /* max new symbols the model can create */
+#define MAX_EMERGED     128     /* max new symbols the model can create */
 #define COOCCUR_SIZE    256     /* co-occurrence matrix dimension */
 #define HEBBIAN_RANK    4       /* low-rank Hebbian LoRA (Sage 3: 8 too high for 96-dim) */
-#define EMERGE_THRESHOLD 0.85f  /* co-occurrence threshold for emergence */
-#define DISCIPLINE_WINDOW 100   /* interactions between emergence attempts */
+#define EMERGE_THRESHOLD 0.75f  /* co-occurrence threshold for emergence */
+#define DISCIPLINE_WINDOW 50    /* interactions between emergence attempts */
 
-/* ── Architecture (matches infer_emolm.c presets) ───────────────────────── */
+/* ── Architecture (matches train_cavellman.c presets) ──────────────────── */
 
 static int E     = 96;
 static int H     = 8;
@@ -88,9 +88,9 @@ typedef struct {
     char name[32];          /* auto-generated name: "glyph_a+glyph_b" */
 } EmergedSymbol;
 
-#define SURVIVAL_USES    20   /* must be used 20 times... */
-#define SURVIVAL_WINDOW  200  /* ...within 200 interactions of birth, or die */
-#define MAX_DEPTH        3    /* depth cap — beyond this, freeze as new primitive */
+#define SURVIVAL_USES    5    /* must be used 5 times... */
+#define SURVIVAL_WINDOW  500  /* ...within 500 interactions of birth, or die */
+#define MAX_DEPTH        5    /* depth cap — beyond this, freeze as new primitive */
 
 /* ── Model ──────────────────────────────────────────────────────────────── */
 
@@ -269,29 +269,48 @@ static int try_emerge_symbol(CaveModel* model, CaveVocab* vocab) {
 
 /*
  * Symbol survival check — evolution needs death.
- * If a symbol hasn't been used SURVIVAL_USES times within SURVIVAL_WINDOW
- * interactions of birth, it dies. If it survives and depth == MAX_DEPTH,
- * freeze it — it becomes a new primitive.
+ *
+ * Emerged symbols live in the vocab as metadata, not as trained embeddings —
+ * the transformer head still outputs only the 88 base glyphs + BOS/MASK.
+ * That means `use_count` is rarely incremented (only when the model happens
+ * to emit an emerged id via generate, which is extremely unlikely), so the
+ * old "die if use_count < SURVIVAL_USES" rule killed 100% of symbols on
+ * passive reading (confirmed: Dracula → 9 born, 9 died with 0 uses).
+ *
+ * Biological fix: a symbol lives while its parent pair is still co-occurring
+ * strongly in the surface layer. When the pattern that produced it fades
+ * (co-occ < EMERGE_THRESHOLD * 0.7), the symbol dies. If the pattern stays
+ * strong and the symbol reached MAX_DEPTH, it freezes into a new primitive.
+ * Use_count is kept as a bonus signal — any actual usage (via generate)
+ * extends life.
  */
 static void check_symbol_survival(CaveModel* model, CaveVocab* vocab) {
+    (void)vocab;
     int now = model->cooccur.total_interactions;
+    CoOccurrence* co = &model->cooccur;
+    float revival_floor = EMERGE_THRESHOLD * 0.7f;
+
     for (int i = 0; i < model->n_emerged; i++) {
         EmergedSymbol* sym = &model->emerged[i];
         if (sym->alive != 1) continue; /* skip dead or frozen */
 
         int age = now - sym->born_at;
-        if (age >= SURVIVAL_WINDOW) {
-            if (sym->use_count < SURVIVAL_USES) {
-                /* Death — not used enough */
-                sym->alive = 0;
-                printf("  *** SYMBOL DIED: %s (used %d/%d times in %d interactions) ***\n",
-                       sym->name, sym->use_count, SURVIVAL_USES, age);
-            } else if (sym->depth >= MAX_DEPTH) {
-                /* Freeze — survived at max depth, becomes primitive */
-                sym->alive = 2;
-                printf("  *** SYMBOL FROZEN: %s → new primitive (depth %d, used %d times) ***\n",
-                       sym->name, sym->depth, sym->use_count);
-            }
+        if (age < SURVIVAL_WINDOW) continue;
+
+        float current_cooccur = (sym->glyph_a < COOCCUR_SIZE && sym->glyph_b < COOCCUR_SIZE)
+            ? co->matrix[sym->glyph_a][sym->glyph_b] : 0.0f;
+        int pattern_alive = (current_cooccur >= revival_floor);
+        int got_used     = (sym->use_count >= SURVIVAL_USES);
+
+        if (!pattern_alive && !got_used) {
+            sym->alive = 0;
+            printf("  *** SYMBOL DIED: %s (co-occ %.2f < %.2f, uses %d/%d, age %d) ***\n",
+                   sym->name, current_cooccur, revival_floor,
+                   sym->use_count, SURVIVAL_USES, age);
+        } else if (sym->depth >= MAX_DEPTH) {
+            sym->alive = 2;
+            printf("  *** SYMBOL FROZEN: %s → new primitive (depth %d, co-occ %.2f, uses %d) ***\n",
+                   sym->name, sym->depth, current_cooccur, sym->use_count);
         }
     }
 }
@@ -760,6 +779,11 @@ static void learn_from_text(AsyncLearner* al, const char* text, int text_len) {
 
             /* Hebbian: passive reading — 0.3x signal, V-only */
             hebbian_update(al->model, NULL, al->vocab->vocab_size + 2, tokens, n, 1);
+
+            /* Count emerged-symbol usage during passive reading too —
+             * otherwise every newly-emerged symbol dies at 0/SURVIVAL_USES
+             * when the cave is only being fed, never spoken to. */
+            count_emerged_usage(al->model, al->vocab, tokens, n);
 
             /* Co-occurrence */
             cooccur_update(&al->model->cooccur, tokens, n);
