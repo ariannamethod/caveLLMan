@@ -8,7 +8,7 @@
 
 ## What is this?
 
-caveLLMan is a language-agnostic transformer that compresses any text into 88 hieroglyphic concepts. Feed it Dracula, Hebrew poetry, news articles, or code documentation — the **semantic tokenizer** maps every word to one of 88 universal symbols, and the model learns patterns in this compressed space.
+caveLLMan is a transformer that compresses English text into 88 hieroglyphic concepts. Feed it Dracula, news articles, or code documentation — the **semantic tokenizer** maps every English word to one of 88 universal symbols, and the model learns patterns in this compressed space. Multilingual tokenization is planned once the engine is language-agnostic end-to-end.
 
 ```
 "the sun rose and the birds started singing"  →  light tree and animal before music
@@ -248,8 +248,8 @@ Open `index.html`. Click glyphs to speak. `?` = help, `⚙` = training engine.
 
 ```bash
 make                               # build all
-./train_emolm --dataset data/cavellman_train_final.txt --preset small --steps 15000
-./train_diffusion --dataset data/cavellman_train_final.txt --steps 15000
+./train_cavellman --dataset data/cavellman_train_final.txt --preset small --steps 15000
+./train_diffusion  --dataset data/cavellman_train_final.txt --steps 15000
 ```
 
 ### Tests

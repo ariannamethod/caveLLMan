@@ -7,7 +7,7 @@
  *
  * The cave painting appears all at once.
  *
- * Build: make diffusion
+ * Build: make train_diffusion
  * Run:   ./train_diffusion --dataset data/cavellman_train_final.txt --steps 15000
  *
  * No Python. No pip. No torch. Pure C + notorch.
@@ -36,7 +36,7 @@ static int CTX   = 32;
 /* Diffusion config */
 #define T_STEPS   30     /* diffusion timesteps */
 
-/* ── Tokenizer (same as train_emolm.c — space split) ───────────────────── */
+/* ── Tokenizer (same as train_cavellman.c — space split) ─────────────── */
 
 typedef struct {
     char tokens[MAX_VOCAB][32];

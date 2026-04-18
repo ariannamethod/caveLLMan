@@ -1,12 +1,18 @@
 *.pyc
 __pycache__/
 
-# notorch build artifacts
-train_emolm
-infer_emolm
+# build artifacts
 *.o
 *.a
-*.bin
-train_emolm
-infer_emolm
+cavellman
+train_cavellman
 train_diffusion
+
+# runtime Hebbian state (per-user)
+*.state
+
+# feed directory is runtime — user drops books here
+feed/
+
+# combined corpus is generated, not committed
+data/corpus.txt

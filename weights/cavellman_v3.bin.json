@@ -7,7 +7,7 @@
   "vocab_size": 88,
   "params": 472608,
   "steps": 15000,
-  "final_loss": 1.6630,
-  "dataset": "data/cavellman_train_final.txt",
+  "final_loss": 2.8141,
+  "dataset": "data/corpus.txt",
   "seed": 42
 }

@@ -1,65 +1,40 @@
-# emoLM — Makefile
-# Train and run emoji language models using notorch (pure C, no Python)
+# caveLLMan — Makefile
+# Self-evolving hieroglyphic language model (pure C + notorch).
 #
-# Usage:
-#   make              Build with BLAS (fastest)
-#   make cpu          Build without BLAS (portable)
-#   make train        Build training binary with BLAS
-#   make infer        Build inference binary
-#   make test         Build and run all tests (C + Python)
-#   make test_c       C smoke test (50 steps, check loss < 5.5)
-#   make test_py      Python unit tests (131 tests)
-#   make clean        Remove build artifacts
+# Targets:
+#   make                       Build cavellman engine (default)
+#   make cavellman             Build interactive engine with BLAS + pthreads
+#   make cavellman-cpu         Build engine without BLAS (portable)
+#   make train_cavellman       Build training binary
+#   make train_diffusion       Build diffusion training binary
+#   make train                 Build all training binaries
+#   make weights               Train fresh weights/cavellman_v3.bin if missing
+#   make test                  Run semantic tokenizer tests (node)
+#   make clean                 Remove build artifacts
+#   make help                  Show this help
 
 CC = cc
 CFLAGS = -O2 -Wall -Wextra -std=c11 -I.
 
-# Detect platform
+# Detect platform for BLAS
 UNAME := $(shell uname)
 
-# ── macOS: Apple Accelerate (AMX/Neural Engine) ──
 ifeq ($(UNAME), Darwin)
   BLAS_FLAGS = -DUSE_BLAS -DACCELERATE -DACCELERATE_NEW_LAPACK -framework Accelerate
   BLAS_NAME = Accelerate
 endif
 
-# ── Linux: OpenBLAS ──
 ifeq ($(UNAME), Linux)
   BLAS_FLAGS = -DUSE_BLAS -lopenblas
   BLAS_NAME = OpenBLAS
 endif
 
-.PHONY: all train cpu infer test test_c test_py clean help
+.PHONY: all cavellman cavellman-cpu train train_cavellman train_diffusion weights test clean help
 
-# Default: build both binaries with BLAS
-all: train_emolm infer_emolm
-	@echo "Built train_emolm + infer_emolm with $(BLAS_NAME)"
+all: cavellman
 
-# Training binary with BLAS
-train: train_emolm
-	@echo "Ready: ./train_emolm"
+# ── Interactive engine ──────────────────────────────────────────────────
 
-train_emolm: ariannamethod/train_emolm.c ariannamethod/notorch.c ariannamethod/notorch.h
-	$(CC) $(CFLAGS) $(BLAS_FLAGS) -Iariannamethod -o train_emolm ariannamethod/train_emolm.c ariannamethod/notorch.c -lm
-	@echo "Compiled: train_emolm (CPU + $(BLAS_NAME))"
-
-# Diffusion training binary
-diffusion: train_diffusion
-	@echo "Ready: ./train_diffusion"
-
-train_diffusion: ariannamethod/train_diffusion.c ariannamethod/notorch.c ariannamethod/notorch.h
-	$(CC) $(CFLAGS) $(BLAS_FLAGS) -Iariannamethod -o train_diffusion ariannamethod/train_diffusion.c ariannamethod/notorch.c -lm
-	@echo "Compiled: train_diffusion (CPU + $(BLAS_NAME))"
-
-# Inference binary with BLAS
-infer: infer_emolm
-	@echo "Ready: ./infer_emolm"
-
-infer_emolm: infer_emolm.c ariannamethod/notorch.c ariannamethod/notorch.h
-	$(CC) $(CFLAGS) $(BLAS_FLAGS) -Iariannamethod -o infer_emolm infer_emolm.c ariannamethod/notorch.c -lm
-	@echo "Compiled: infer_emolm (CPU + $(BLAS_NAME))"
-
-# caveLLMan — self-evolving inference with Hebbian plasticity
 cavellman: cavellman.c ariannamethod/notorch.c ariannamethod/notorch.h
 	$(CC) $(CFLAGS) $(BLAS_FLAGS) -Iariannamethod -o cavellman cavellman.c ariannamethod/notorch.c -lm -lpthread
 	@echo "Compiled: cavellman (Hebbian + async learner + $(BLAS_NAME))"
@@ -68,47 +43,55 @@ cavellman-cpu: cavellman.c ariannamethod/notorch.c ariannamethod/notorch.h
 	$(CC) $(CFLAGS) -Iariannamethod -o cavellman cavellman.c ariannamethod/notorch.c -lm -lpthread
 	@echo "Compiled: cavellman (Hebbian + async learner, no BLAS)"
 
-# CPU without BLAS (portable fallback) — builds both binaries
-cpu:
-	$(CC) $(CFLAGS) -Iariannamethod -o train_emolm ariannamethod/train_emolm.c ariannamethod/notorch.c -lm
-	$(CC) $(CFLAGS) -Iariannamethod -o infer_emolm infer_emolm.c ariannamethod/notorch.c -lm
-	@echo "Compiled: train_emolm + infer_emolm (CPU, no BLAS)"
+# ── Training binaries ───────────────────────────────────────────────────
 
-# ── Tests ────────────────────────────────────────────────────────────────
-# All tests
-test: test_c test_py
+train: train_cavellman train_diffusion
 
-# C smoke test: 50 steps, verify training completes
-test_c: cpu
-	@echo "── C smoke test (tiny, 50 steps) ──"
-	@./train_emolm --preset tiny --steps 50 --no-save 2>&1 | tee /tmp/emolm_test.log
-	@grep -q "Training complete" /tmp/emolm_test.log && echo "✅ C test passed" || (echo "❌ C test failed" && exit 1)
+train_cavellman: ariannamethod/train_cavellman.c ariannamethod/notorch.c ariannamethod/notorch.h
+	$(CC) $(CFLAGS) $(BLAS_FLAGS) -Iariannamethod -o train_cavellman ariannamethod/train_cavellman.c ariannamethod/notorch.c -lm
+	@echo "Compiled: train_cavellman ($(BLAS_NAME))"
 
-# Python unit tests
-test_py:
-	@echo "── Python unit tests ──"
-	python3 -m unittest tests.test_emolm -v
+train_diffusion: ariannamethod/train_diffusion.c ariannamethod/notorch.c ariannamethod/notorch.h
+	$(CC) $(CFLAGS) $(BLAS_FLAGS) -Iariannamethod -o train_diffusion ariannamethod/train_diffusion.c ariannamethod/notorch.c -lm
+	@echo "Compiled: train_diffusion ($(BLAS_NAME))"
+
+# ── Weights: train fresh if missing ─────────────────────────────────────
+# The .bin file is gitignored. Run `make weights` to generate.
+
+weights: weights/cavellman_v3.bin
+
+weights/cavellman_v3.bin: train_cavellman data/cavellman_train_final.txt
+	@mkdir -p weights
+	./train_cavellman --dataset data/cavellman_train_final.txt --preset small --save weights/cavellman_v3.bin
+	@echo "Trained: weights/cavellman_v3.bin — run ./cavellman --weights weights/cavellman_v3.bin --preset small"
+
+# ── Tests ───────────────────────────────────────────────────────────────
+
+test:
+	@echo "── semantic tokenizer tests ──"
+	@node tests/test_semantic_tokenizer.js
+
+# ── Cleanup ─────────────────────────────────────────────────────────────
 
 clean:
-	rm -f train_emolm infer_emolm *.o
+	rm -f cavellman train_cavellman train_diffusion *.o
 
 help:
-	@echo "emoLM — emoji language model (pure C, notorch)"
+	@echo "caveLLMan — self-evolving hieroglyphic LM (pure C, notorch)"
 	@echo ""
-	@echo "  make            Build all with BLAS"
-	@echo "  make cpu        Build all without BLAS (portable)"
-	@echo "  make train      Build training binary"
-	@echo "  make infer      Build inference binary"
-	@echo "  make test       Run all tests (C + Python)"
-	@echo "  make test_c     C smoke test (50 steps)"
-	@echo "  make test_py    Python unit tests"
-	@echo "  make clean      Remove artifacts"
+	@echo "  make                  Build cavellman engine (default)"
+	@echo "  make cavellman        Build engine with BLAS + pthreads"
+	@echo "  make cavellman-cpu    Build engine without BLAS"
+	@echo "  make train            Build training binaries"
+	@echo "  make weights          Train weights/cavellman_v3.bin (if missing)"
+	@echo "  make test             Run semantic tokenizer tests (node)"
+	@echo "  make clean            Remove build artifacts"
 	@echo ""
 	@echo "Train:"
-	@echo "  ./train_emolm --preset standard --steps 4000"
-	@echo "  ./train_emolm --preset tiny --steps 2000 --save weights/emolm.bin"
+	@echo "  ./train_cavellman --dataset data/cavellman_train_final.txt --preset small --steps 15000"
+	@echo "  ./train_diffusion  --dataset data/cavellman_train_final.txt --steps 15000"
 	@echo ""
-	@echo "Infer:"
-	@echo "  ./infer_emolm --weights weights/emolm.bin --preset tiny"
+	@echo "Run:"
+	@echo "  ./cavellman --weights weights/cavellman_v3.bin --preset small"
 	@echo ""
 	@echo "Presets: tiny(18/3/2) micro(48/4/3) standard(64/8/3) small(96/8/4) medium(128/8/4)"

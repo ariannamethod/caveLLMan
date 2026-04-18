@@ -1,123 +1,124 @@
 /*
- * train_emolm.c — Train emoLM transformer on emoji stories using notorch
+ * train_cavellman.c — Train caveLLMan transformer on 88-glyph sequences
  *
- * No Python. No pip. No torch. Pure C.
- * Emoji-level tokenizer (space-split), GPT architecture, Chuck optimizer.
+ * No Python. No pip. No torch. Pure C + notorch.
+ * Glyph-level tokenizer (space-split), GPT architecture, Chuck optimizer.
  *
  * Build: make train
- * Run:   ./train_emolm [dataset] [steps] [lr]
+ * Run:   ./train_cavellman [--dataset FILE] [--preset NAME] [--steps N]
  *
- * Default: data/emoji_stories.txt, 2000 steps, lr=3e-4
+ * Default: data/cavellman_train_final.txt, small preset, cosine LR.
  *
  * Copyright (C) 2026 Arianna Method contributors
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 #include "notorch.h"
+#include "semantic_tokenizer.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
 
-/* ── Config (tiny preset — fast training, matches emolm.py tiny) ────────── */
+/* ── Config ─────────────────────────────────────────────────────────────── */
 
-#define MAX_VOCAB   256     /* max emoji types */
+#define MAX_VOCAB   256     /* 88 base glyphs + room for emerged symbols */
 #define MAX_SEQ     128     /* block_size — covers all presets */
-#define MAX_STORIES 512
+#define MAX_STORIES 32000
 #define MAX_STORY_LEN 64
 
 /* Model architecture — configurable at runtime */
-static int E     = 18;     /* embedding dim */
-static int H     = 3;      /* attention heads */
-static int HD    = 6;      /* head_dim = E / H */
-static int FFN_D = 72;     /* 4 * E */
-static int N_L   = 2;      /* layers */
-static int CTX   = 32;     /* context window */
+static int E     = 96;     /* embedding dim */
+static int H     = 8;      /* attention heads */
+static int HD    = 12;     /* head_dim = E / H */
+static int FFN_D = 384;    /* 4 * E */
+static int N_L   = 4;      /* layers */
+static int CTX   = 128;    /* context window */
 
-/* ── Emoji tokenizer ─────────────────────────────────────────────────────── */
+/* ── Glyph vocab + story container ─────────────────────────────────────── */
 
 typedef struct {
-    char tokens[MAX_VOCAB][32];  /* UTF-8 emoji strings (ZWJ sequences up to 28 bytes) */
-    int  vocab_size;             /* actual number of unique emojis */
-    int  bos_id;                 /* vocab_size = BOS/END token */
-} EmojiVocab;
+    char tokens[MAX_VOCAB][32];  /* glyph names seeded from semantic_tokenizer.h */
+    int  vocab_size;             /* = GLYPH_COUNT (88) after seeding */
+    int  bos_id;                 /* = GLYPH_COUNT */
+} GlyphVocab;
 
-/* Stories as token ID sequences */
 typedef struct {
     int  data[MAX_STORIES][MAX_STORY_LEN];
     int  lens[MAX_STORIES];
     int  count;
 } StoryData;
 
-static int vocab_find(EmojiVocab* v, const char* tok) {
-    for (int i = 0; i < v->vocab_size; i++) {
-        if (strcmp(v->tokens[i], tok) == 0) return i;
-    }
-    return -1;
-}
-
-static int vocab_add(EmojiVocab* v, const char* tok) {
-    int id = vocab_find(v, tok);
-    if (id >= 0) return id;
-    if (v->vocab_size >= MAX_VOCAB - 1) return -1; /* reserve 1 for BOS */
-    id = v->vocab_size;
-    strncpy(v->tokens[id], tok, 31);
-    v->tokens[id][31] = '\0';
-    v->vocab_size++;
-    return id;
-}
-
 /*
- * Read UTF-8 codepoint at *p.
- * Returns number of bytes consumed, writes codepoint to *cp.
+ * Load raw English from `path`, split into sentences on .!? boundaries
+ * (SPA phonon style, same logic the engine uses in learn_from_text),
+ * then compress each sentence through semtok_line → glyph id sequence.
+ * Sentences that yield < 2 tokens are skipped.
+ *
+ * Vocab is pre-seeded with the 88 canonical glyphs from the shared header —
+ * no runtime vocab growth, so train and inference see the same token ids.
  */
-static int utf8_next(const char* p, int* cp) {
-    unsigned char c = (unsigned char)*p;
-    if (c < 0x80) { *cp = c; return 1; }
-    if ((c & 0xE0) == 0xC0) { *cp = (c & 0x1F) << 6 | (p[1] & 0x3F); return 2; }
-    if ((c & 0xF0) == 0xE0) { *cp = (c & 0x0F) << 12 | (p[1] & 0x3F) << 6 | (p[2] & 0x3F); return 3; }
-    if ((c & 0xF8) == 0xF0) { *cp = (c & 0x07) << 18 | (p[1] & 0x3F) << 12 | (p[2] & 0x3F) << 6 | (p[3] & 0x3F); return 4; }
-    *cp = c; return 1;
-}
+static int load_stories(const char* path, GlyphVocab* vocab, StoryData* stories) {
+    vocab->bos_id = semtok_seed_vocab(vocab->tokens, &vocab->vocab_size);
 
-/*
- * Load emoji stories from file.
- * Format: one story per line, emojis separated by spaces.
- * Each emoji is a space-delimited token (may be multi-byte UTF-8 + variant selectors).
- */
-static int load_stories(const char* path, EmojiVocab* vocab, StoryData* stories) {
     FILE* f = fopen(path, "r");
     if (!f) { printf("Cannot open %s\n", path); return -1; }
+    fseek(f, 0, SEEK_END);
+    long fsize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (fsize <= 0) { fclose(f); return -1; }
 
-    vocab->vocab_size = 0;
-    stories->count = 0;
-
-    char line[4096];
-    while (fgets(line, sizeof(line), f) && stories->count < MAX_STORIES) {
-        /* Strip newline */
-        int len = (int)strlen(line);
-        while (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r'))
-            line[--len] = '\0';
-        if (len == 0) continue;
-
-        /* Tokenize by spaces */
-        int sid = stories->count;
-        stories->lens[sid] = 0;
-
-        char* tok = strtok(line, " ");
-        while (tok && stories->lens[sid] < MAX_STORY_LEN - 2) {
-            /* Skip empty tokens */
-            if (strlen(tok) == 0) { tok = strtok(NULL, " "); continue; }
-            int id = vocab_add(vocab, tok);
-            if (id >= 0) {
-                stories->data[sid][stories->lens[sid]++] = id;
-            }
-            tok = strtok(NULL, " ");
-        }
-        if (stories->lens[sid] > 0) stories->count++;
-    }
+    char* content = (char*)malloc((size_t)fsize + 1);
+    if (!content) { fclose(f); return -1; }
+    size_t got = fread(content, 1, (size_t)fsize, f);
+    content[got] = '\0';
     fclose(f);
 
-    vocab->bos_id = vocab->vocab_size; /* BOS/END = vocab_size */
+    stories->count = 0;
+    long sent_start = 0;
+    long total_sentences = 0, total_kept = 0;
+
+    for (long i = 0; i <= fsize && stories->count < MAX_STORIES; i++) {
+        int is_boundary = (i == fsize);
+        if (!is_boundary && (content[i] == '.' || content[i] == '!' || content[i] == '?')) {
+            char next = (i + 1 < fsize) ? content[i + 1] : ' ';
+            if (next == ' ' || next == '\n' || next == '\r' || next == '"' ||
+                next == '\'' || next == ')' || i + 1 >= fsize)
+                is_boundary = 1;
+        }
+        if (!is_boundary) continue;
+
+        long end = (i < fsize) ? i + 1 : i;
+        long len = end - sent_start;
+        sent_start = end;
+        if (len < 3 || len >= 4096) continue;
+
+        char sentence[4096];
+        memcpy(sentence, content + (end - len), (size_t)len);
+        sentence[len] = '\0';
+
+        int has_alpha = 0;
+        for (long j = 0; j < len; j++) {
+            char c = sentence[j];
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) { has_alpha = 1; break; }
+        }
+        if (!has_alpha) continue;
+        total_sentences++;
+
+        int toks[MAX_STORY_LEN];
+        int n = semtok_line(sentence, toks, MAX_STORY_LEN - 2);
+        if (n < 2) continue;
+
+        int sid = stories->count;
+        stories->lens[sid] = n;
+        memcpy(stories->data[sid], toks, (size_t)n * sizeof(int));
+        stories->count++;
+        total_kept++;
+    }
+
+    free(content);
+    printf("  source: %ld bytes, %ld sentences scanned, %ld kept (≥2 glyphs)\n",
+           fsize, total_sentences, total_kept);
     return 0;
 }
 
@@ -135,9 +136,9 @@ typedef struct {
     } layers[8]; /* max 8 layers */
     nt_tensor *rms_f;   /* [E] — final norm */
     nt_tensor *head;    /* [V+1, E] */
-} EmoModel;
+} GlyphModel;
 
-static long count_params(EmoModel* m, int V) {
+static long count_params(GlyphModel* m, int V) {
     long n = m->wte->len + m->wpe->len + m->rms_f->len + m->head->len;
     for (int l = 0; l < N_L; l++) {
         n += m->layers[l].rms1->len + m->layers[l].rms2->len;
@@ -149,10 +150,10 @@ static long count_params(EmoModel* m, int V) {
     return n;
 }
 
-static EmoModel* model_create(int V) {
+static GlyphModel* model_create(int V) {
     /* V = vocab_size + 1 (BOS) */
     int Vp = V + 1;
-    EmoModel* m = (EmoModel*)calloc(1, sizeof(EmoModel));
+    GlyphModel* m = (GlyphModel*)calloc(1, sizeof(GlyphModel));
 
     m->wte = nt_tensor_new2d(Vp, E);
     nt_tensor_xavier(m->wte, Vp, E);
@@ -171,7 +172,6 @@ static EmoModel* model_create(int V) {
         nt_tensor_xavier(m->layers[l].wv, E, E);
         m->layers[l].wo = nt_tensor_new2d(E, E);
         nt_tensor_xavier(m->layers[l].wo, E, E);
-        /* Scale residual output init */
         for (int i = 0; i < m->layers[l].wo->len; i++)
             m->layers[l].wo->data[i] *= scale_res / 0.1f;
 
@@ -193,7 +193,7 @@ static EmoModel* model_create(int V) {
     return m;
 }
 
-static void model_free(EmoModel* m) {
+static void model_free(GlyphModel* m) {
     nt_tensor_free(m->wte); nt_tensor_free(m->wpe);
     for (int l = 0; l < N_L; l++) {
         nt_tensor_free(m->layers[l].rms1); nt_tensor_free(m->layers[l].rms2);
@@ -207,14 +207,13 @@ static void model_free(EmoModel* m) {
 
 /* ── Forward pass on tape ────────────────────────────────────────────────── */
 
-static int model_forward(EmoModel* m, int* tokens, int* targets, int seq_len, int V) {
+static int model_forward(GlyphModel* m, int* tokens, int* targets, int seq_len, int V) {
     int Vp = V + 1;
 
-    /* Register params */
     int wte_i = nt_tape_param(m->wte); nt_tape_no_decay(wte_i);
     int wpe_i = nt_tape_param(m->wpe); nt_tape_no_decay(wpe_i);
 
-    int li[8][8]; /* layer_idx[layer][param_idx] */
+    int li[8][8];
     for (int l = 0; l < N_L; l++) {
         li[l][0] = nt_tape_param(m->layers[l].rms1);
         li[l][1] = nt_tape_param(m->layers[l].wq);
@@ -228,7 +227,6 @@ static int model_forward(EmoModel* m, int* tokens, int* targets, int seq_len, in
     int rmsf_i = nt_tape_param(m->rms_f);
     int head_i = nt_tape_param(m->head);
 
-    /* Input tokens as tensor */
     nt_tensor* tok_t = nt_tensor_new(seq_len);
     nt_tensor* tgt_t = nt_tensor_new(seq_len);
     for (int i = 0; i < seq_len; i++) {
@@ -240,33 +238,27 @@ static int model_forward(EmoModel* m, int* tokens, int* targets, int seq_len, in
     nt_tensor_free(tok_t);
     nt_tensor_free(tgt_t);
 
-    /* Embed: h = wte[tokens] + wpe[positions] */
     int h = nt_seq_embedding(wte_i, wpe_i, tok_i, seq_len, E);
 
-    /* Transformer blocks */
     for (int l = 0; l < N_L; l++) {
-        /* RMSNorm → Attention */
         int xn = nt_seq_rmsnorm(h, li[l][0], seq_len, E);
         int q = nt_seq_linear(li[l][1], xn, seq_len);
         int k = nt_seq_linear(li[l][2], xn, seq_len);
         int v = nt_seq_linear(li[l][3], xn, seq_len);
         int attn = nt_mh_causal_attention(q, k, v, seq_len, HD);
         int proj = nt_seq_linear(li[l][4], attn, seq_len);
-        h = nt_add(h, proj); /* residual */
+        h = nt_add(h, proj);
 
-        /* RMSNorm → FFN (SiLU gate + down) */
         xn = nt_seq_rmsnorm(h, li[l][5], seq_len, E);
         int fc1 = nt_seq_linear(li[l][6], xn, seq_len);
         fc1 = nt_silu(fc1);
         int fc2 = nt_seq_linear(li[l][7], fc1, seq_len);
-        h = nt_add(h, fc2); /* residual */
+        h = nt_add(h, fc2);
     }
 
-    /* Final norm + head */
     int hf = nt_seq_rmsnorm(h, rmsf_i, seq_len, E);
     int logits = nt_seq_linear(head_i, hf, seq_len);
 
-    /* Loss */
     int loss = nt_seq_cross_entropy(logits, tgt_i, seq_len, Vp);
     return loss;
 }
@@ -289,8 +281,8 @@ static const Preset PRESETS[] = {
     {"tiny",     18, 3, 2, 32,  2000},
     {"micro",    48, 4, 3, 64,  3000},
     {"standard", 64, 8, 3, 64,  4000},
-    {"small",    96, 8, 4, 128, 5000},
-    {"medium",  128, 8, 4, 128, 8000},
+    {"small",    96, 8, 4, 128, 15000},
+    {"medium",  128, 8, 4, 128, 15000},
 };
 #define N_PRESETS 5
 
@@ -304,15 +296,14 @@ static const Preset* find_preset(const char* name) {
 /* ── Main ────────────────────────────────────────────────────────────────── */
 
 int main(int argc, char** argv) {
-    const char* dataset = "data/emoji_stories.txt";
-    const char* preset_name = "tiny";
-    int    steps = 0; /* 0 = use preset default */
+    const char* dataset = "data/dracula.txt";
+    const char* preset_name = "small";
+    int    steps = 0;
     float  base_lr = 3e-4f;
-    const char* save_path = "weights/emolm.bin";  /* save by default */
+    const char* save_path = "weights/cavellman_v3.bin";
     int    no_save = 0;
     int    seed = 42;
 
-    /* Simple arg parsing */
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--dataset") == 0 && i + 1 < argc) {
             dataset = argv[++i];
@@ -329,19 +320,18 @@ int main(int argc, char** argv) {
         } else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
             seed = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-            printf("train_emolm — emoLM training on notorch (pure C)\n\n");
-            printf("  --dataset FILE    Dataset (default: data/emoji_stories.txt)\n");
-            printf("  --preset NAME     tiny/micro/standard/small/medium (default: tiny)\n");
+            printf("train_cavellman — caveLLMan training on notorch (pure C)\n\n");
+            printf("  --dataset FILE    Raw English text (default: data/dracula.txt)\n");
+            printf("  --preset NAME     tiny/micro/standard/small/medium (default: small)\n");
             printf("  --steps N         Training steps (default: preset)\n");
             printf("  --lr FLOAT        Learning rate (default: 3e-4)\n");
-            printf("  --save FILE       Save weights (default: weights/emolm.bin)\n");
+            printf("  --save FILE       Save weights (default: weights/cavellman_v3.bin)\n");
             printf("  --no-save         Don't save weights\n");
             printf("  --seed N          RNG seed (default: 42)\n");
             return 0;
         }
     }
 
-    /* Apply preset */
     const Preset* pr = find_preset(preset_name);
     if (!pr) {
         printf("Unknown preset: %s\n", preset_name);
@@ -357,42 +347,37 @@ int main(int argc, char** argv) {
     if (steps <= 0) steps = pr->steps;
 
     printf("════════════════════════════════════════════════════════\n");
-    printf("  emoLM — Emoji Story GPT on notorch (pure C)\n");
+    printf("  caveLLMan — Hieroglyphic LM on notorch (pure C)\n");
     printf("════════════════════════════════════════════════════════\n");
     printf("  dataset: %s\n", dataset);
     printf("  preset:  %s (E=%d H=%d L=%d CTX=%d)\n", preset_name, E, H, N_L, CTX);
     printf("  steps:   %d, lr=%.1e, seed=%d\n", steps, base_lr, seed);
 
-    /* Load data */
-    EmojiVocab vocab;
-    StoryData stories;
+    static GlyphVocab vocab;
+    static StoryData stories;
     memset(&vocab, 0, sizeof(vocab));
     memset(&stories, 0, sizeof(stories));
 
     if (load_stories(dataset, &vocab, &stories) != 0) return 1;
     int V = vocab.vocab_size;
-    printf("  stories: %d, vocab: %d emojis + ⏹end = %d\n",
+    printf("  stories: %d, vocab: %d glyphs + ⏹end = %d\n",
            stories.count, V, V + 1);
 
-    /* Print vocab sample */
     printf("  vocab:   ");
     int show = V < 20 ? V : 20;
     for (int i = 0; i < show; i++) printf("%s ", vocab.tokens[i]);
     if (V > 20) printf("...");
     printf("\n");
 
-    /* Create model */
     nt_seed(seed);
-    EmoModel* model = model_create(V);
+    GlyphModel* model = model_create(V);
     long np = count_params(model, V);
     printf("  params:  %ld (%.1f KB)\n", np, np * 4.0f / 1024.0f);
     printf("════════════════════════════════════════════════════════\n\n");
 
-    /* LR schedule: cosine with warmup */
     nt_schedule sched = nt_schedule_cosine(base_lr, steps / 10, steps, base_lr * 0.1f);
     nt_nan_guard guard = nt_nan_guard_new();
 
-    /* Training loop */
     printf("training...\n");
     printf("──────────────────────────────────────────────────\n");
 
@@ -404,13 +389,11 @@ int main(int argc, char** argv) {
     for (int step = 0; step < steps; step++) {
         float lr = nt_schedule_get_lr(&sched);
 
-        /* Pick story (round-robin) */
         int sid = step % stories.count;
         int slen = stories.lens[sid];
 
-        /* Build tokens: BOS + story + BOS, capped to CTX */
         int tokens[MAX_SEQ + 2], targets[MAX_SEQ + 2];
-        int n = slen + 1; /* +1 for BOS prefix */
+        int n = slen + 1;
         if (n > CTX) n = CTX;
 
         tokens[0] = vocab.bos_id;
@@ -420,10 +403,9 @@ int main(int argc, char** argv) {
         for (int i = 0; i < n - 1; i++) {
             targets[i] = tokens[i + 1];
         }
-        targets[n - 1] = vocab.bos_id; /* predict END */
+        targets[n - 1] = vocab.bos_id;
         int seq = n;
 
-        /* Forward */
         nt_tape_start();
         int loss_idx = model_forward(model, tokens, targets, seq, V);
         float loss_val = nt_tape_get()->entries[loss_idx].output->data[0];
@@ -431,21 +413,17 @@ int main(int argc, char** argv) {
         if (step == 0) first_loss = loss_val;
         last_loss = loss_val;
 
-        /* Backward */
         nt_tape_backward(loss_idx);
 
-        /* NaN check */
         if (!nt_nan_guard_check(&guard)) {
             nt_tape_clear();
             continue;
         }
 
-        /* Gradient clip + Chuck step */
         nt_tape_clip_grads(1.0f);
         nt_tape_chuck_step(lr, loss_val);
         nt_tape_clear();
 
-        /* Log */
         if ((step + 1) % log_every == 0 || step == 0 || step == steps - 1) {
             double elapsed = (now_ms() - t0) / 1000.0;
             printf("  step %4d/%d | loss %.4f | lr %.2e | %.1fs\n",
@@ -462,15 +440,14 @@ int main(int argc, char** argv) {
     printf("\n");
     printf("  time: %.1f seconds (%.1f steps/s)\n", total_s, steps / total_s);
     printf("  nans: %d detected, %d skipped\n", guard.total_nan_count, guard.skipped_steps);
-    printf("✅ Training complete\n\n");
+    printf("Training complete\n\n");
 
-    /* ── Generation ─────────────────────────────────────────────────────── */
-    printf("── sample stories ──\n");
-    nt_train_mode(0); /* eval mode */
+    /* ── Generation sample ────────────────────────────────────────────── */
+    printf("── sample glyph sequences ──\n");
+    nt_train_mode(0);
 
     int Vp = V + 1;
     for (int s = 0; s < 8; s++) {
-        /* Start with BOS */
         int ctx[MAX_SEQ];
         ctx[0] = vocab.bos_id;
         int gen_len = 1;
@@ -478,7 +455,6 @@ int main(int argc, char** argv) {
         for (int step = 0; step < CTX - 1 && gen_len < CTX; step++) {
             nt_tape_start();
 
-            /* Build token/target arrays for current sequence */
             int toks[MAX_SEQ], tgts[MAX_SEQ];
             for (int i = 0; i < gen_len; i++) toks[i] = ctx[i];
             for (int i = gen_len; i < CTX; i++) toks[i] = 0;
@@ -486,17 +462,13 @@ int main(int argc, char** argv) {
 
             int loss_idx_g = model_forward(model, toks, tgts, gen_len, V);
 
-            /* Get logits for last position */
             nt_tape* tape = nt_tape_get();
-            /* logits parent of cross_entropy is parent1 */
             int logits_idx = tape->entries[loss_idx_g].parent1;
             nt_tensor* logits = tape->entries[logits_idx].output;
 
-            /* Sample from last position */
             float* last_logits = logits->data + (gen_len - 1) * Vp;
             float temp = 0.8f;
 
-            /* Temperature + softmax */
             float mx = last_logits[0];
             for (int i = 1; i < Vp; i++) if (last_logits[i] > mx) mx = last_logits[i];
             float sum = 0;
@@ -507,9 +479,7 @@ int main(int argc, char** argv) {
             }
             for (int i = 0; i < Vp; i++) probs[i] /= sum;
 
-            /* Top-p / nucleus sampling */
             float top_p = 0.9f;
-            /* Sort indices by probability descending (insertion sort, Vp is small) */
             int indices[MAX_VOCAB + 1];
             for (int i = 0; i < Vp; i++) indices[i] = i;
             for (int i = 1; i < Vp; i++) {
@@ -521,7 +491,6 @@ int main(int argc, char** argv) {
                 }
                 indices[j + 1] = key;
             }
-            /* Accumulate until we reach top_p */
             float cum_p = 0;
             int nucleus_size = 0;
             for (int i = 0; i < Vp; i++) {
@@ -529,10 +498,8 @@ int main(int argc, char** argv) {
                 nucleus_size++;
                 if (cum_p >= top_p) break;
             }
-            /* Renormalize nucleus */
             float nuc_sum = 0;
             for (int i = 0; i < nucleus_size; i++) nuc_sum += probs[indices[i]];
-            /* Sample from nucleus */
             float r = (float)rand() / (float)RAND_MAX;
             float cum = 0;
             int next = vocab.bos_id;
@@ -543,13 +510,12 @@ int main(int argc, char** argv) {
 
             nt_tape_clear();
 
-            if (next == vocab.bos_id) break; /* END token */
+            if (next == vocab.bos_id) break;
             ctx[gen_len++] = next;
         }
 
-        /* Print story */
         printf("  %d: ", s + 1);
-        for (int i = 1; i < gen_len; i++) { /* skip BOS */
+        for (int i = 1; i < gen_len; i++) {
             if (ctx[i] >= 0 && ctx[i] < V)
                 printf("%s ", vocab.tokens[ctx[i]]);
         }
@@ -559,7 +525,6 @@ int main(int argc, char** argv) {
     /* ── Save weights ──────────────────────────────────────────────────── */
     if (save_path && !no_save) {
         printf("\n── saving weights ──\n");
-        /* Collect all param tensors */
         nt_tensor* params[256];
         int pi = 0;
         params[pi++] = model->wte;
@@ -579,7 +544,6 @@ int main(int argc, char** argv) {
         nt_save(save_path, params, pi);
         printf("  saved %d tensors to %s\n", pi, save_path);
 
-        /* Save metadata JSON alongside weights */
         char meta_path[512];
         snprintf(meta_path, sizeof(meta_path), "%s.json", save_path);
         FILE* mf = fopen(meta_path, "w");
@@ -601,7 +565,6 @@ int main(int argc, char** argv) {
             printf("  metadata: %s\n", meta_path);
         }
 
-        /* Save vocab for inferencer */
         char vocab_path[512];
         snprintf(vocab_path, sizeof(vocab_path), "%s.vocab", save_path);
         FILE* vf = fopen(vocab_path, "w");
