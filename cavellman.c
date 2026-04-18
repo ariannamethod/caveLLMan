@@ -28,6 +28,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 
 /* ── Limits ─────────────────────────────────────────────────────────────── */
 
@@ -907,6 +908,15 @@ static void stop_learner(void) {
 #define DUAL_TICK_US        400000 /* 0.4s per tick */
 #define DUAL_MAX_GEN        24
 
+/* Arianna-style mass threshold for async notorch microtrain (CPT) —
+ * when bytes + resonance + novelty all trip, the field forks a
+ * `train_cavellman --start-from <current>` child and swaps weights
+ * in-place when it finishes. */
+#define MICRO_MIN_BYTES     2500   /* accumulated feed bytes */
+#define MICRO_MIN_NOVELTY   8.0f   /* cumulative unknown-pair signal */
+#define MICRO_MIN_RESONANCE 15.0f  /* cumulative excitement integral */
+#define MICRO_TRAIN_STEPS   "300"  /* short CPT burst */
+
 typedef struct {
     float excitement;
     float coherence_floor;
@@ -915,9 +925,22 @@ typedef struct {
     int   spoke_count;
     int   total_count;
     const char* name;
+
+    /* Mass threshold CPT (Arianna-style) */
+    long  mass_bytes;
+    float mass_novelty;
+    float mass_resonance;
+    char  holding_path[512];    /* feed/<name>_holding.txt */
+    char  weights_path[512];    /* current on-disk .bin for --start-from */
+    char  next_weights_path[512]; /* where child will save */
+    const char* preset_name;    /* pass to child */
+    int   microtrain_active;
+    pid_t microtrain_pid;
+    int   microtrain_done_count;
 } CaveField;
 
-static void field_init(CaveField* f, const char* name, float baseline) {
+static void field_init(CaveField* f, const char* name, float baseline,
+                       const char* weights_path, const char* preset_name) {
     f->excitement = 0.0f;
     f->coherence_floor = baseline;
     f->baseline_floor = baseline;
@@ -925,11 +948,51 @@ static void field_init(CaveField* f, const char* name, float baseline) {
     f->spoke_count = 0;
     f->total_count = 0;
     f->name = name;
+
+    f->mass_bytes = 0;
+    f->mass_novelty = 0.0f;
+    f->mass_resonance = 0.0f;
+    f->microtrain_active = 0;
+    f->microtrain_pid = -1;
+    f->microtrain_done_count = 0;
+    f->preset_name = preset_name;
+
+    mkdir("feed", 0755);
+    snprintf(f->holding_path, sizeof(f->holding_path), "feed/%s_holding.txt", name);
+    strncpy(f->weights_path, weights_path, sizeof(f->weights_path) - 1);
+    f->weights_path[sizeof(f->weights_path) - 1] = '\0';
+    snprintf(f->next_weights_path, sizeof(f->next_weights_path),
+             "weights/cavellman_%s_micro.bin", name);
+    /* fresh holding file */
+    FILE* hf = fopen(f->holding_path, "w");
+    if (hf) fclose(hf);
+}
+
+/*
+ * Append a heard/spoken token sequence to the field's holding file as a
+ * sentence (glyph names separated by spaces, terminated by a period so
+ * the SPA splitter sees a phonon boundary). Also updates mass counters.
+ */
+static void field_append_holding(CaveField* f, CaveVocab* v, const int* tokens, int len) {
+    if (len <= 0 || f->microtrain_active) return;
+    FILE* fp = fopen(f->holding_path, "a");
+    if (!fp) return;
+
+    long bytes_written = 0;
+    for (int i = 0; i < len; i++) {
+        int t = tokens[i];
+        if (t < 0 || t >= v->vocab_size) continue;
+        bytes_written += fprintf(fp, "%s ", v->tokens[t]);
+    }
+    bytes_written += fprintf(fp, ".\n");
+    fclose(fp);
+    f->mass_bytes += bytes_written;
 }
 
 /* One heard token updates excitement + dissonance from surface co-occurrence.
  * Also feeds the listening model's co-occurrence matrix so its field of
- * expectations shifts with what it hears — parallel learning, no KV mutation. */
+ * expectations shifts with what it hears — parallel learning, no KV mutation.
+ * Mass counters accumulate for the CPT trigger. */
 static void field_hear(CaveField* f, CaveModel* m, int prev, int tok) {
     if (tok < 0 || tok >= COOCCUR_SIZE) return;
 
@@ -947,11 +1010,133 @@ static void field_hear(CaveField* f, CaveModel* m, int prev, int tok) {
     if (co < 0.15f) f->dissonance += (0.15f - co);
     if (f->dissonance > 1.0f) f->dissonance = 1.0f;
 
+    /* Mass accumulators for CPT threshold */
+    f->mass_novelty   += surprise * novelty;
+    f->mass_resonance += f->excitement;
+
     /* Passive co-occ update (symmetric, as elsewhere) */
     if (prev >= 0 && prev < COOCCUR_SIZE) {
         m->cooccur.pair_count[prev][tok]++;
         m->cooccur.pair_count[tok][prev]++;
     }
+}
+
+/* Replace tensor data in-place from a loaded .bin file. Used after the
+ * async microtrain child finishes — we keep the CaveModel struct and all
+ * its layers/KV caches intact, only the weight values swap. */
+static int microtrain_reload_weights(CaveField* f, CaveModel* m) {
+    int n_loaded = 0;
+    nt_tensor** loaded = nt_load(f->next_weights_path, &n_loaded);
+    if (!loaded || n_loaded < 4 + 8 * N_L) {
+        printf("  [%s] microtrain: failed to load %s (got %d tensors)\n",
+               f->name, f->next_weights_path, n_loaded);
+        if (loaded) {
+            for (int i = 0; i < n_loaded; i++) nt_tensor_free(loaded[i]);
+            free(loaded);
+        }
+        return -1;
+    }
+
+    nt_tensor* params[256];
+    int pi = 0;
+    params[pi++] = m->wte;
+    params[pi++] = m->wpe;
+    for (int l = 0; l < N_L; l++) {
+        params[pi++] = m->layers[l].rms1;
+        params[pi++] = m->layers[l].wq;
+        params[pi++] = m->layers[l].wk;
+        params[pi++] = m->layers[l].wv;
+        params[pi++] = m->layers[l].wo;
+        params[pi++] = m->layers[l].rms2;
+        params[pi++] = m->layers[l].w_fc1;
+        params[pi++] = m->layers[l].w_fc2;
+    }
+    params[pi++] = m->rms_f;
+    params[pi++] = m->head;
+
+    int copied = 0;
+    for (int i = 0; i < n_loaded && i < pi; i++) {
+        if (params[i]->len == loaded[i]->len) {
+            memcpy(params[i]->data, loaded[i]->data,
+                   (size_t)params[i]->len * sizeof(float));
+            copied++;
+        }
+    }
+    for (int i = 0; i < n_loaded; i++) nt_tensor_free(loaded[i]);
+    free(loaded);
+
+    /* New current weights = what the child just wrote */
+    strncpy(f->weights_path, f->next_weights_path, sizeof(f->weights_path) - 1);
+    f->weights_path[sizeof(f->weights_path) - 1] = '\0';
+    f->microtrain_done_count++;
+    return copied;
+}
+
+/*
+ * Check if mass thresholds are tripped and fork the microtrain child.
+ * Also reaps a previously spawned child non-blockingly and swaps weights.
+ * This runs once per tick in the dual loop.
+ */
+static void field_microtrain_tick(CaveField* f, CaveModel* m) {
+    if (f->microtrain_active) {
+        int status = 0;
+        pid_t r = waitpid(f->microtrain_pid, &status, WNOHANG);
+        if (r == 0) return; /* still running */
+        if (r < 0) {
+            f->microtrain_active = 0;
+            return;
+        }
+        /* Child finished — swap weights if successful */
+        if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+            int copied = microtrain_reload_weights(f, m);
+            if (copied > 0)
+                printf("\n  [%s] microtrain #%d done — %d tensors swapped (weights live)\n\n",
+                       f->name, f->microtrain_done_count, copied);
+        } else {
+            printf("\n  [%s] microtrain child failed (status=%d)\n\n",
+                   f->name, WEXITSTATUS(status));
+        }
+        f->microtrain_active = 0;
+
+        /* Reset accumulators + rotate holding file so the next round starts fresh */
+        f->mass_bytes = 0;
+        f->mass_novelty = 0.0f;
+        f->mass_resonance = 0.0f;
+        char consumed[640];
+        snprintf(consumed, sizeof(consumed), "%s.learned", f->holding_path);
+        rename(f->holding_path, consumed);
+        FILE* hp = fopen(f->holding_path, "w");
+        if (hp) fclose(hp);
+        return;
+    }
+
+    if (f->mass_bytes       < MICRO_MIN_BYTES)     return;
+    if (f->mass_novelty     < MICRO_MIN_NOVELTY)   return;
+    if (f->mass_resonance   < MICRO_MIN_RESONANCE) return;
+
+    /* All three tripped — fork child */
+    pid_t pid = fork();
+    if (pid == 0) {
+        /* Child: run train_cavellman as CPT on holding text */
+        execlp("./train_cavellman", "train_cavellman",
+               "--dataset",    f->holding_path,
+               "--preset",     f->preset_name,
+               "--steps",      MICRO_TRAIN_STEPS,
+               "--start-from", f->weights_path,
+               "--save",       f->next_weights_path,
+               "--seed",       "7",
+               (char*)NULL);
+        /* If exec returns, it failed */
+        _exit(127);
+    }
+    if (pid < 0) {
+        printf("  [%s] microtrain fork failed: %s\n", f->name, strerror(errno));
+        return;
+    }
+    f->microtrain_active = 1;
+    f->microtrain_pid = pid;
+    printf("\n  [%s] microtrain spawned (pid=%d, %ld bytes / nov %.1f / res %.1f)\n\n",
+           f->name, pid, f->mass_bytes, f->mass_novelty, f->mass_resonance);
 }
 
 static void field_decay(CaveField* f) {
@@ -1066,10 +1251,12 @@ static int try_read_user_line(char* buf, int cap) {
  * field trips first responds.
  */
 static void dual_main(CaveModel* A, CaveModel* B, CaveVocab* vA, CaveVocab* vB,
-                      float temp, float top_p) {
+                      float temp, float top_p,
+                      const char* wa_path, const char* wb_path,
+                      const char* preset_name) {
     CaveField fA, fB;
-    field_init(&fA, "A", 0.30f);  /* extrovert */
-    field_init(&fB, "B", 0.60f);  /* introvert */
+    field_init(&fA, "A", 0.30f, wa_path, preset_name);  /* extrovert */
+    field_init(&fB, "B", 0.60f, wb_path, preset_name);  /* introvert */
 
     /* Non-blocking stdin — user glyphs any time. */
     int flags = fcntl(fileno(stdin), F_GETFL, 0);
@@ -1123,6 +1310,8 @@ static void dual_main(CaveModel* A, CaveModel* B, CaveVocab* vA, CaveVocab* vB,
                     field_hear(&fA, A, p, utoks[i]);
                     field_hear(&fB, B, p, utoks[i]);
                 }
+                field_append_holding(&fA, vA, utoks, un);
+                field_append_holding(&fB, vB, utoks, un);
                 memcpy(last_tokens, utoks, (size_t)un * sizeof(int));
                 last_len = un;
             }
@@ -1166,6 +1355,8 @@ static void dual_main(CaveModel* A, CaveModel* B, CaveVocab* vA, CaveVocab* vB,
                 int p = (i == 0) ? prev : gen[i - 1];
                 field_hear(other_f, other_m, p, gen[i]);
             }
+            /* Listener remembers what it heard for eventual CPT */
+            field_append_holding(other_f, vv, gen, gn);
 
             memcpy(last_tokens, gen, (size_t)gn * sizeof(int));
             last_len = gn;
@@ -1179,20 +1370,33 @@ static void dual_main(CaveModel* A, CaveModel* B, CaveVocab* vA, CaveVocab* vB,
         field_maturity_drift(&fA);
         field_maturity_drift(&fB);
 
-        /* 5. Pace */
+        /* 5. Mass-threshold CPT — fork child if tripped, reap if running */
+        field_microtrain_tick(&fA, A);
+        field_microtrain_tick(&fB, B);
+
+        /* 6. Pace */
         usleep(DUAL_TICK_US);
     }
 
-    printf("\n  [A] spoke %d / %d turns, final floor %.3f\n",
-           fA.spoke_count, fA.total_count, fA.coherence_floor);
-    printf("  [B] spoke %d / %d turns, final floor %.3f\n",
-           fB.spoke_count, fB.total_count, fB.coherence_floor);
+    /* If a microtrain child is still running when we quit, wait for it
+     * politely so we don't leave a zombie. */
+    if (fA.microtrain_active) waitpid(fA.microtrain_pid, NULL, 0);
+    if (fB.microtrain_active) waitpid(fB.microtrain_pid, NULL, 0);
+
+    printf("\n  [A] spoke %d / %d turns, final floor %.3f, microtrains=%d\n",
+           fA.spoke_count, fA.total_count, fA.coherence_floor, fA.microtrain_done_count);
+    printf("  [B] spoke %d / %d turns, final floor %.3f, microtrains=%d\n",
+           fB.spoke_count, fB.total_count, fB.coherence_floor, fB.microtrain_done_count);
     printf("the cave-pair remembers.\n");
 }
 
 /* ── Main ───────────────────────────────────────────────────────────────── */
 
 int main(int argc, char** argv) {
+    /* Keep stdout unbuffered even when redirected through a pipe —
+     * otherwise dual-mode dialogue disappears into libc buffers until quit. */
+    setvbuf(stdout, NULL, _IONBF, 0);
+
     const char* weights_path = "weights/cavellman_v3.bin";
     const char* state_path = "weights/cavellman.state";
     const char* preset_name = "small";
@@ -1267,7 +1471,8 @@ int main(int argc, char** argv) {
         cooccur_init(&A->cooccur);
         cooccur_init(&B->cooccur);
 
-        dual_main(A, B, &vocab_a, &vocab_b, temp, top_p);
+        dual_main(A, B, &vocab_a, &vocab_b, temp, top_p,
+                  weights_a, weights_b, preset_name);
 
         free(A->layers); free(A);
         free(B->layers); free(B);

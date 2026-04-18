@@ -298,6 +298,7 @@ static const Preset* find_preset(const char* name) {
 int main(int argc, char** argv) {
     const char* dataset = "data/dracula.txt";
     const char* preset_name = "small";
+    const char* start_from = NULL;
     int    steps = 0;
     float  base_lr = 3e-4f;
     const char* save_path = "weights/cavellman_v3.bin";
@@ -319,15 +320,18 @@ int main(int argc, char** argv) {
             no_save = 1;
         } else if (strcmp(argv[i], "--seed") == 0 && i + 1 < argc) {
             seed = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--start-from") == 0 && i + 1 < argc) {
+            start_from = argv[++i];
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             printf("train_cavellman — caveLLMan training on notorch (pure C)\n\n");
-            printf("  --dataset FILE    Raw English text (default: data/dracula.txt)\n");
-            printf("  --preset NAME     tiny/micro/standard/small/medium (default: small)\n");
-            printf("  --steps N         Training steps (default: preset)\n");
-            printf("  --lr FLOAT        Learning rate (default: 3e-4)\n");
-            printf("  --save FILE       Save weights (default: weights/cavellman_v3.bin)\n");
-            printf("  --no-save         Don't save weights\n");
-            printf("  --seed N          RNG seed (default: 42)\n");
+            printf("  --dataset FILE     Raw English text (default: data/dracula.txt)\n");
+            printf("  --preset NAME      tiny/micro/standard/small/medium (default: small)\n");
+            printf("  --steps N          Training steps (default: preset)\n");
+            printf("  --lr FLOAT         Learning rate (default: 3e-4)\n");
+            printf("  --save FILE        Save weights (default: weights/cavellman_v3.bin)\n");
+            printf("  --no-save          Don't save weights\n");
+            printf("  --seed N           RNG seed (default: 42)\n");
+            printf("  --start-from FILE  Continue training from existing weights (CPT)\n");
             return 0;
         }
     }
@@ -371,6 +375,47 @@ int main(int argc, char** argv) {
 
     nt_seed(seed);
     GlyphModel* model = model_create(V);
+
+    /* Continued pre-training: copy existing weights into fresh model tensors. */
+    if (start_from) {
+        int n_loaded = 0;
+        nt_tensor** loaded = nt_load(start_from, &n_loaded);
+        if (loaded && n_loaded >= 4 + 8 * N_L) {
+            nt_tensor* params[256];
+            int pi = 0;
+            params[pi++] = model->wte;
+            params[pi++] = model->wpe;
+            for (int l = 0; l < N_L; l++) {
+                params[pi++] = model->layers[l].rms1;
+                params[pi++] = model->layers[l].wq;
+                params[pi++] = model->layers[l].wk;
+                params[pi++] = model->layers[l].wv;
+                params[pi++] = model->layers[l].wo;
+                params[pi++] = model->layers[l].rms2;
+                params[pi++] = model->layers[l].w_fc1;
+                params[pi++] = model->layers[l].w_fc2;
+            }
+            params[pi++] = model->rms_f;
+            params[pi++] = model->head;
+
+            int copied = 0;
+            for (int i = 0; i < n_loaded && i < pi; i++) {
+                if (params[i]->len == loaded[i]->len) {
+                    memcpy(params[i]->data, loaded[i]->data,
+                           (size_t)params[i]->len * sizeof(float));
+                    copied++;
+                }
+            }
+            for (int i = 0; i < n_loaded; i++) nt_tensor_free(loaded[i]);
+            free(loaded);
+            printf("  continued from: %s (%d/%d tensors copied)\n",
+                   start_from, copied, pi);
+        } else {
+            printf("  WARN: --start-from %s failed (loaded %d tensors), using fresh init\n",
+                   start_from, n_loaded);
+        }
+    }
+
     long np = count_params(model, V);
     printf("  params:  %ld (%.1f KB)\n", np, np * 4.0f / 1024.0f);
     printf("════════════════════════════════════════════════════════\n\n");
