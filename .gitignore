@@ -17,3 +17,8 @@ feed/
 # combined corpus is generated, not committed
 data/corpus.txt
 data/corpus_big.txt
+
+# runtime microtrain artefacts
+weights/cavellman_*_micro.bin
+weights/cavellman_*_micro.bin.json
+weights/cavellman_*_micro.bin.vocab
