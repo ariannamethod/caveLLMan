@@ -307,6 +307,10 @@ node tests/test_semantic_tokenizer.js    # 35 tests
 | Engine | [notorch](https://github.com/ariannamethod/notorch) (pure C, BLAS) |
 | State file | `weights/cavellman.state` |
 
+## License
+
+This project is licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later). See [`LICENSE`](LICENSE).
+
 ## Credits
 
 88-glyph alphabet inspired by Genevieve von Petzinger's 32 cave signs. Originally forked from [emojiGPT](https://github.com/MattWenJun/emojiGPT) by @MattWenJun (who forked Karpathy's [microgpt.py](https://gist.github.com/karpathy/8627fe009c40f57531cb18360106ce95)). Rebuilt from scratch: semantic tokenizer, Hebbian plasticity, symbol emergence with natural selection, SPA sentence phonons, async self-learning, diffusion engine, cave-painting SVG hieroglyphs, C engine on [notorch](https://github.com/ariannamethod/notorch) — by [Arianna Method](https://github.com/ariannamethod).
