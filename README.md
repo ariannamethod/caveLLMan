@@ -240,11 +240,26 @@ Hebbian adapters react fast but don't reshape the underlying embeddings. For dee
 
 When all three trip their thresholds (currently `2500 bytes + novelty ≥ 8 + resonance ≥ 15`), the engine forks `train_cavellman --start-from <current.bin>` on its own holding buffer. The child does ~300 steps of proper notorch CPT — tape, backward, Chuck optimizer, full-param updates — while the dual dialogue keeps running in the parent. When the child finishes, the parent atomically memcpys the new tensor data back into the live `CaveModel` (KV cache, emerged symbols, Hebbian adapters all stay intact — only the raw weights swap).
 
+Current thresholds: **2500 bytes + novelty ≥ 8 + resonance ≥ 15** per engine, **300 CPT steps** per burst.
+
+From a real `--dual --preset medium --weights cavellman_medium.bin` session driven by ~20 mixed user prompts (nature / emotion / mind / BE-verbs / unexpected combos like `AI dream death music`) over ~10 minutes. After 896 ticks B tripped first:
+
 ```
-[A] microtrain spawned (pid=22820, 874 bytes / nov 80.1 / res 277.5)
-...dialogue continues for ~8 seconds...
-[A] microtrain #1 done — 36 tensors swapped (weights live)
+[B] microtrain spawned (pid=29925, 2601 bytes / nov 425.9 / res 575.8)
+...child notorch CPT runs in parallel, parent loop keeps talking...
+[B] microtrain #1 done — 36 tensors swapped (weights live)
 ```
+
+Snippets from the same session — emerged composites actually surfacing in output:
+
+```
+[A] man+me me and body       ← composite used in generation
+[B] BE woman BE               ← BE super-verb chain
+[A] know me and+me            ← "know" picked up mid-session
+[B] one and+BE me             ← another composite in speech
+```
+
+Maturity drifted both gates to their lower clamps: A 0.30 → 0.00, B 0.60 → 0.30. Speak ratio settled at ~14% — sparse dialogue with bursty user input is the equilibrium.
 
 So the cave runs on two learning clocks: Hebbian on every turn (fast, shallow), CPT on accumulated mass (slow, deep). Whatever it has been hearing — the other engine, the user, or a book dropped into `feed/` — becomes new weights.
 
