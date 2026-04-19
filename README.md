@@ -1,8 +1,8 @@
 # caveLLMan
 
-### 88 hieroglyphs. any text. any language.
+### 88 hieroglyphs. any English text. one shared alphabet.
 
-*30,000 years ago, humans drew 32 recurring signs across 146 cave sites on four continents. We added 56 more for the 21st century — and built a transformer that compresses any text into them.*
+*30,000 years ago, humans drew 32 recurring signs across 146 cave sites on four continents. We added 56 more for the 21st century — and built a transformer that compresses English into them, a pair that talks to each other through them, and a runtime that keeps training itself on what it hears.*
 
 ---
 
@@ -178,7 +178,7 @@ A GPT-class transformer learns patterns in the compressed glyph space. Two train
 
 ### 3. Hebbian Plasticity
 
-The cave learns from every conversation. No backprop — low-rank Hebbian LoRA adapters on Q and V projections update after each generation. Neurons that fire together wire together.
+The cave learns from every conversation. Low-rank Hebbian LoRA adapters on Q and V projections update after each generation — no backprop, no tape, pure online co-occurrence. Neurons that fire together wire together. This is the fast, always-on layer of adaptation. For deeper consolidation see [§8 — Mass-Threshold CPT](#8-mass-threshold-continued-pre-training).
 
 ### 4. Symbol Emergence + Natural Selection
 
@@ -230,6 +230,26 @@ Shipped weights include two distinct voices — `cavellman_A.bin` trained on Dra
 
 Seven symbols emerged in 59 ticks (`not+BE`, `cold+man`, `man+me`, `and+me`, `me+BE`, `me+have`). Maturity drifted: A 0.30 → 0.20, B 0.60 → 0.50 — both loosened their gates because the ring stayed sparse.
 
+### 8. Mass-Threshold Continued Pre-Training
+
+Hebbian adapters react fast but don't reshape the underlying embeddings. For deeper consolidation each engine in the dual ring carries a Arianna-style mass accumulator with three counters:
+
+- **bytes** — raw volume of heard/spoken glyph text captured in the engine's holding buffer (`feed/<name>_holding.txt`)
+- **novelty** — cumulative surprise × novelty signal per token (same quantity that drives excitement)
+- **resonance** — cumulative excitement integral across ticks
+
+When all three trip their thresholds (currently `2500 bytes + novelty ≥ 8 + resonance ≥ 15`), the engine forks `train_cavellman --start-from <current.bin>` on its own holding buffer. The child does ~300 steps of proper notorch CPT — tape, backward, Chuck optimizer, full-param updates — while the dual dialogue keeps running in the parent. When the child finishes, the parent atomically memcpys the new tensor data back into the live `CaveModel` (KV cache, emerged symbols, Hebbian adapters all stay intact — only the raw weights swap).
+
+```
+[A] microtrain spawned (pid=22820, 874 bytes / nov 80.1 / res 277.5)
+...dialogue continues for ~8 seconds...
+[A] microtrain #1 done — 36 tensors swapped (weights live)
+```
+
+So the cave runs on two learning clocks: Hebbian on every turn (fast, shallow), CPT on accumulated mass (slow, deep). Whatever it has been hearing — the other engine, the user, or a book dropped into `feed/` — becomes new weights.
+
+Safeguards (planned, not yet in code): sha256 whitelist of approved sources, holding-area gate with `!learn <hash>` command, unknown-word ratio rejection. For now the holding buffer is trusted — don't expose it to untrusted text.
+
 ---
 
 ## Quick Start
@@ -263,10 +283,10 @@ make cavellman                     # build with BLAS + pthreads
   cave: and BE change
 
   *** SYMBOL EMERGED: dark+cold (depth=1, strength=0.999) ***
-  *** SYMBOL DIED: dark+cold (used 0/20 times in 200 interactions) ***
+  *** SYMBOL DIED: dark+cold (co-occ 0.01 < 0.525, uses 0/5, age 500) ***
 
 ▸ ?              — list all glyphs (base + emerged)
-▸ stats          — co-occurrence, emergence status
+▸ stats          — co-occurrence, emergence status, field state
 ▸ save           — save Hebbian state
 ▸ quit           — save and exit
 ```
@@ -280,10 +300,20 @@ Open `index.html`. Click glyphs to speak. `?` = help, `⚙` = training engine.
 ### Training (notorch C)
 
 ```bash
-make                               # build all
-./train_cavellman --dataset data/cavellman_train_final.txt --preset small --steps 15000
-./train_diffusion  --dataset data/cavellman_train_final.txt --steps 15000
+make train                         # build train_cavellman + train_diffusion
+# assemble a corpus of raw English
+cat data/dracula.txt data/frankenstein.txt data/miller.txt \
+    data/dante.txt data/suppertime.txt data/fineweb_edu.txt > data/corpus_big.txt
+
+./train_cavellman --dataset data/corpus_big.txt --preset medium --steps 20000
+./train_diffusion  --dataset data/corpus_big.txt --steps 15000
+
+# continued pre-training from an existing checkpoint
+./train_cavellman --start-from weights/cavellman_medium.bin \
+                  --dataset data/my_new_text.txt --preset medium --steps 500
 ```
+
+`train_cavellman` reads raw English, splits on `.!?` (SPA phonons), and compresses each sentence through the same `semantic_tokenizer.h` the engine uses at inference — train and runtime share one source of truth for the 88 canonical glyphs. `--start-from FILE` is what the dual-mode mass-threshold CPT uses under the hood.
 
 ### Tests
 
@@ -311,15 +341,20 @@ node tests/test_semantic_tokenizer.js    # 35 tests
                               │  prediction error signal     │
                               ├──────────────────────────────┤
                               │  Co-occurrence → emergence   │
-                              │  Born free,  survive 20/200  │
-                              │  Depth cap 3 → freeze        │
+                              │  Birth free, survive while   │
+                              │    parent co-occ ≥ 0.525     │
+                              │  Depth cap 5 → freeze        │
                               └──────────────────────────────┘
                                            │
-                                           ▼
-                              ┌──────────────────────┐
-                              │  88+ SVG Hieroglyphs │
-                              │  base + emerged sign │
-                              └──────────────────────┘
+         ┌─────────────────────────────────┼────────────────────┐
+         ▼                                 ▼                    ▼
+┌──────────────────┐           ┌──────────────────────┐  ┌───────────────┐
+│  Dual CaveField  │           │  Mass-threshold CPT  │  │ SVG output    │
+│  excitement      │           │  bytes+nov+resonance │  │ 88 base +     │
+│  coherence_floor │──triggers▶│  → fork train_cave-  │  │ emerged signs │
+│  dissonance      │           │  llman --start-from  │  └───────────────┘
+│  maturity drift  │           │  → atomic reload     │
+└──────────────────┘           └──────────────────────┘
 ```
 
 ## Numbers
@@ -335,11 +370,17 @@ node tests/test_semantic_tokenizer.js    # 35 tests
 | Survival | parent co-occ ≥ 0.525 (or ≥ 5 uses) within 500 interactions |
 | Depth cap | 5 levels, then freeze as primitive |
 | Sentence splitter | SPA phonons (.!?) |
-| C model (small)  | 472K params |
-| C model (medium) | 826K params |
+| C model (small)  | 472K params (1.89 MB) |
+| C model (medium) | 826K params (3.23 MB) |
 | Browser model | ~31K params |
+| Dual mode field | excitement + dissonance + drifting coherence_floor |
+| Silence gate | speak iff `excitement > floor` or `dissonance > 0.40` |
+| Maturity drift | ±0.005 / turn, clamped ±0.30 around baseline |
+| CPT trigger | 2500 bytes + 8 novelty + 15 resonance (per engine) |
+| CPT burst | 300 notorch steps, Chuck optimizer, full-param updates |
 | Engine | [notorch](https://github.com/ariannamethod/notorch) (pure C, BLAS) |
 | State file | `weights/cavellman.state` |
+| Shipped weights | v3 (mixed), A (Dracula), B (Frankenstein), medium (12.7 MB corpus) |
 
 ## License
 
@@ -347,4 +388,4 @@ This project is licensed under the GNU General Public License v3.0 or later (GPL
 
 ## Credits
 
-88-glyph alphabet inspired by Genevieve von Petzinger's 32 cave signs. Originally forked from [emojiGPT](https://github.com/MattWenJun/emojiGPT) by @MattWenJun (who forked Karpathy's [microgpt.py](https://gist.github.com/karpathy/8627fe009c40f57531cb18360106ce95)). Rebuilt from scratch: semantic tokenizer, Hebbian plasticity, symbol emergence with natural selection, SPA sentence phonons, async self-learning, diffusion engine, cave-painting SVG hieroglyphs, C engine on [notorch](https://github.com/ariannamethod/notorch) — by [Arianna Method](https://github.com/ariannamethod).
+88-glyph alphabet inspired by Genevieve von Petzinger's 32 cave signs. Originally forked from [emojiGPT](https://github.com/MattWenJun/emojiGPT) by @MattWenJun (who forked Karpathy's [microgpt.py](https://gist.github.com/karpathy/8627fe009c40f57531cb18360106ce95)). Rebuilt from scratch: semantic tokenizer, Hebbian plasticity, symbol emergence with natural selection, SPA sentence phonons, async self-learning, diffusion engine, cave-painting SVG hieroglyphs, C engine on [notorch](https://github.com/ariannamethod/notorch). Dual-mode silence-gate physics borrowed from [Stanley](https://github.com/ariannamethod/stanley), tunnel/resonance primitives from [AML](https://github.com/ariannamethod/ariannamethod.ai), mass-threshold CPT pattern from [arianna.c](https://github.com/ariannamethod/arianna.c). Corpora include Gutenberg public-domain texts, a FineWeb-EDU sample, and Oleg Ataev's own *SUPPERTIME v2.0*. — [Arianna Method](https://github.com/ariannamethod).
