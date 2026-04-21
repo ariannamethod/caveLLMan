@@ -489,9 +489,20 @@ static float* model_forward(CaveModel* m, int token_id, int pos) {
     float x[256], xn[256], q[256], k[256], v[256];
     float attn_out[256], fc1[1024], fc2[256], proj[256];
 
+    /* Clamp token_id to wte's actual row count. vocab_size can exceed the
+     * file's saved V (emerged composites live in vocab but not in wte),
+     * so sampling may hand us an id past the tensor — bind it to the last
+     * representable row rather than reading heap garbage. Same for pos
+     * vs. wpe — downsized children have a smaller CTX than their parents'
+     * last spoken prompt, and pos can outrun wpe's saved row count. */
+    int wte_rows = m->wte->len / E;
+    int wpe_rows = m->wpe->len / E;
+    int safe_id  = (token_id >= 0 && token_id < wte_rows) ? token_id : 0;
+    int safe_pos = (pos >= 0 && pos < wpe_rows) ? pos : wpe_rows - 1;
+
     /* Embed */
     for (int j = 0; j < E; j++)
-        x[j] = m->wte->data[token_id * E + j] + m->wpe->data[pos * E + j];
+        x[j] = m->wte->data[safe_id * E + j] + m->wpe->data[safe_pos * E + j];
 
     for (int l = 0; l < N_L; l++) {
         Layer* ly = &m->layers[l];
@@ -506,9 +517,10 @@ static float* model_forward(CaveModel* m, int token_id, int pos) {
         apply_hebbian_lora(q, ly->heb_A_q, ly->heb_B_q, xn, E, HEBBIAN_RANK);
         apply_hebbian_lora(v, ly->heb_A_v, ly->heb_B_v, xn, E, HEBBIAN_RANK);
 
-        /* Store KV */
-        memcpy(kv_keys[l][pos], k, E * sizeof(float));
-        memcpy(kv_vals[l][pos], v, E * sizeof(float));
+        /* Store KV — use safe_pos so children with smaller CTX don't write
+         * past the kv cache or their own usable window. */
+        memcpy(kv_keys[l][safe_pos], k, E * sizeof(float));
+        memcpy(kv_vals[l][safe_pos], v, E * sizeof(float));
 
         /* Multi-head attention */
         memset(attn_out, 0, E * sizeof(float));
@@ -516,21 +528,21 @@ static float* model_forward(CaveModel* m, int token_id, int pos) {
         for (int h = 0; h < H; h++) {
             int hs = h * HD;
             float scores[128];
-            for (int t = 0; t <= pos; t++) {
+            for (int t = 0; t <= safe_pos; t++) {
                 float dot = 0;
                 for (int j = 0; j < HD; j++) dot += q[hs+j] * kv_keys[l][t][hs+j];
                 scores[t] = dot * scale;
             }
             /* Softmax */
             float mx = scores[0];
-            for (int t = 1; t <= pos; t++) if (scores[t] > mx) mx = scores[t];
+            for (int t = 1; t <= safe_pos; t++) if (scores[t] > mx) mx = scores[t];
             float sm = 0;
-            for (int t = 0; t <= pos; t++) { scores[t] = expf(scores[t] - mx); sm += scores[t]; }
-            for (int t = 0; t <= pos; t++) scores[t] /= sm;
+            for (int t = 0; t <= safe_pos; t++) { scores[t] = expf(scores[t] - mx); sm += scores[t]; }
+            for (int t = 0; t <= safe_pos; t++) scores[t] /= sm;
             /* Weighted sum */
             for (int j = 0; j < HD; j++) {
                 float val = 0;
-                for (int t = 0; t <= pos; t++) val += scores[t] * kv_vals[l][t][hs+j];
+                for (int t = 0; t <= safe_pos; t++) val += scores[t] * kv_vals[l][t][hs+j];
                 attn_out[hs+j] = val;
             }
         }
@@ -1101,6 +1113,131 @@ static int blend_weights(const char* path_a, const char* path_b, const char* pat
     return ok;
 }
 
+/*
+ * Downsized sexual mitosis: child has a STRICTLY SMALLER preset than its
+ * parents. Each tensor is reallocated at child shape, filled from parent
+ * A (even layers) or parent B (odd layers) with row/col prefix truncation.
+ * Embeddings, final RMS and head use the average of both parents, also
+ * truncated. This is how a medium-preset ring gives birth to a small cave;
+ * small → micro; micro → tiny.
+ *
+ * Assumes both parents share the SAME preset (pa_pr). Caller guarantees
+ * this — a ring with heterogeneous parents falls back to same-size blend.
+ */
+static int blend_weights_downsized(const char* path_a, const char* path_b,
+                                   const Preset* pa_pr, const Preset* child_pr,
+                                   const char* path_out) {
+    int n_a = 0, n_b = 0;
+    nt_tensor** ta = nt_load(path_a, &n_a);
+    nt_tensor** tb = nt_load(path_b, &n_b);
+    if (!ta || !tb || n_a != n_b || n_a < 4) {
+        if (ta) { for (int i = 0; i < n_a; i++) nt_tensor_free(ta[i]); free(ta); }
+        if (tb) { for (int i = 0; i < n_b; i++) nt_tensor_free(tb[i]); free(tb); }
+        return -1;
+    }
+
+    const int E_p = pa_pr->embd, NL_p = pa_pr->layers, FFN_p = 4 * E_p;
+    const int E_c = child_pr->embd, NL_c = child_pr->layers, CTX_c = child_pr->ctx;
+    const int FFN_c = 4 * E_c;
+
+    /* Vocab rows from tensor length / row-stride. wte layout [V_w, E_p],
+     * head layout [V_h, E_p]; V_w and V_h can differ (head in cave files
+     * usually has V+1 rows, not V+2 — see the ASAN fix in model_forward). */
+    const int V_w = ta[0]->len / E_p;
+    const int post_a = 2 + NL_p * 8;
+    const int V_h = ta[post_a + 1]->len / E_p;
+
+    const int n_child = 2 + NL_c * 8 + 2;
+    nt_tensor** tc = (nt_tensor**)calloc(n_child, sizeof(nt_tensor*));
+    if (!tc) {
+        for (int i = 0; i < n_a; i++) nt_tensor_free(ta[i]); free(ta);
+        for (int i = 0; i < n_b; i++) nt_tensor_free(tb[i]); free(tb);
+        return -1;
+    }
+
+    int shape2[2];
+    int shape1[1];
+
+    /* wte: [V_w, E_c] — avg A+B, truncate cols to E_c */
+    shape2[0] = V_w; shape2[1] = E_c;
+    tc[0] = nt_tensor_new_shape(shape2, 2);
+    for (int r = 0; r < V_w; r++)
+        for (int c = 0; c < E_c; c++)
+            tc[0]->data[r*E_c + c] = 0.5f * (ta[0]->data[r*E_p + c]
+                                           + tb[0]->data[r*E_p + c]);
+
+    /* wpe: [CTX_c, E_c] — avg, truncate rows + cols */
+    shape2[0] = CTX_c; shape2[1] = E_c;
+    tc[1] = nt_tensor_new_shape(shape2, 2);
+    for (int r = 0; r < CTX_c; r++)
+        for (int c = 0; c < E_c; c++)
+            tc[1]->data[r*E_c + c] = 0.5f * (ta[1]->data[r*E_p + c]
+                                           + tb[1]->data[r*E_p + c]);
+
+    /* Layer blocks: alternate A / B, truncate. Child has NL_c ≤ NL_p, so
+     * we drop parent layers beyond NL_c — child simply doesn't inherit them. */
+    for (int l = 0; l < NL_c; l++) {
+        nt_tensor** src = (l % 2 == 0) ? ta : tb;
+        int pbase = 2 + l * 8;
+        int cbase = 2 + l * 8;
+
+        /* rms1 (idx +0) and rms2 (idx +5): [E] */
+        shape1[0] = E_c;
+        tc[cbase + 0] = nt_tensor_new_shape(shape1, 1);
+        tc[cbase + 5] = nt_tensor_new_shape(shape1, 1);
+        for (int i = 0; i < E_c; i++) {
+            tc[cbase + 0]->data[i] = src[pbase + 0]->data[i];
+            tc[cbase + 5]->data[i] = src[pbase + 5]->data[i];
+        }
+
+        /* wq/wk/wv/wo (idx +1..+4): [E, E] */
+        shape2[0] = E_c; shape2[1] = E_c;
+        for (int ti = 1; ti <= 4; ti++) {
+            tc[cbase + ti] = nt_tensor_new_shape(shape2, 2);
+            for (int r = 0; r < E_c; r++)
+                for (int c = 0; c < E_c; c++)
+                    tc[cbase + ti]->data[r*E_c + c] = src[pbase + ti]->data[r*E_p + c];
+        }
+
+        /* fc1 (idx +6): [E, FFN_D] */
+        shape2[0] = E_c; shape2[1] = FFN_c;
+        tc[cbase + 6] = nt_tensor_new_shape(shape2, 2);
+        for (int r = 0; r < E_c; r++)
+            for (int c = 0; c < FFN_c; c++)
+                tc[cbase + 6]->data[r*FFN_c + c] = src[pbase + 6]->data[r*FFN_p + c];
+
+        /* fc2 (idx +7): [FFN_D, E] */
+        shape2[0] = FFN_c; shape2[1] = E_c;
+        tc[cbase + 7] = nt_tensor_new_shape(shape2, 2);
+        for (int r = 0; r < FFN_c; r++)
+            for (int c = 0; c < E_c; c++)
+                tc[cbase + 7]->data[r*E_c + c] = src[pbase + 7]->data[r*E_p + c];
+    }
+
+    /* rms_f: [E] — avg, truncate */
+    const int post_c = 2 + NL_c * 8;
+    shape1[0] = E_c;
+    tc[post_c] = nt_tensor_new_shape(shape1, 1);
+    for (int i = 0; i < E_c; i++)
+        tc[post_c]->data[i] = 0.5f * (ta[post_a]->data[i] + tb[post_a]->data[i]);
+
+    /* head: [V_h, E_c] — avg, truncate cols */
+    shape2[0] = V_h; shape2[1] = E_c;
+    tc[post_c + 1] = nt_tensor_new_shape(shape2, 2);
+    for (int r = 0; r < V_h; r++)
+        for (int c = 0; c < E_c; c++)
+            tc[post_c + 1]->data[r*E_c + c] =
+                0.5f * (ta[post_a + 1]->data[r*E_p + c]
+                      + tb[post_a + 1]->data[r*E_p + c]);
+
+    int ok = nt_save(path_out, tc, n_child);
+
+    for (int i = 0; i < n_a; i++) nt_tensor_free(ta[i]); free(ta);
+    for (int i = 0; i < n_b; i++) nt_tensor_free(tb[i]); free(tb);
+    for (int i = 0; i < n_child; i++) if (tc[i]) nt_tensor_free(tc[i]); free(tc);
+    return ok;
+}
+
 /* Copy a binary file byte-for-byte (for child's .vocab and .bin.json). */
 static int copy_file(const char* src, const char* dst) {
     FILE* fi = fopen(src, "rb");
@@ -1132,8 +1269,37 @@ static Cave* colony_mitosis(const Cave* pa, const Cave* pb, const char* preset_n
     snprintf(parent_v, sizeof(parent_v), "%s.vocab", pa->field.weights_path);
     snprintf(parent_j, sizeof(parent_j), "%s.json",  pa->field.weights_path);
 
-    if (blend_weights(pa->field.weights_path, pb->field.weights_path, child_w) != 0) {
-        printf("  [mitosis] blend_weights failed for %s × %s → %s\n",
+    /* Decide child architecture. If both parents share a preset and that
+     * preset is larger than tiny, the child is born one tier smaller
+     * (medium→small, small→micro, micro→tiny). Otherwise the child keeps
+     * the parents' preset — blend without downsize. */
+    const char* pa_preset = pa->field.preset_name ? pa->field.preset_name : preset_name;
+    const char* pb_preset = pb->field.preset_name ? pb->field.preset_name : preset_name;
+    const char* child_preset = preset_name;
+    int do_downsize = 0;
+    if (strcmp(pa_preset, pb_preset) == 0) {
+        const char* smaller = smaller_preset_name(pa_preset);
+        if (strcmp(smaller, pa_preset) != 0) {
+            child_preset = smaller;
+            do_downsize = 1;
+        } else {
+            child_preset = pa_preset;
+        }
+    } else {
+        /* Heterogeneous parents — fall back to same-size blend at pa's preset. */
+        child_preset = pa_preset;
+    }
+
+    const Preset* pa_pr = find_preset(pa_preset);
+    const Preset* ch_pr = find_preset(child_preset);
+
+    int blended = do_downsize
+        ? blend_weights_downsized(pa->field.weights_path, pb->field.weights_path,
+                                  pa_pr, ch_pr, child_w)
+        : blend_weights(pa->field.weights_path, pb->field.weights_path, child_w);
+    if (blended != 0) {
+        printf("  [mitosis] blend_weights%s failed for %s × %s → %s\n",
+               do_downsize ? "_downsized" : "",
                pa->field.name, pb->field.name, child_w);
         return NULL;
     }
@@ -1148,7 +1314,7 @@ static Cave* colony_mitosis(const Cave* pa, const Cave* pb, const char* preset_n
      * strncpy's it into a permanent slot only via pointer — so strdup. */
     char* permanent_name = strdup(child_name);
 
-    Cave* child = cave_new(permanent_name, child_baseline, child_w, preset_name);
+    Cave* child = cave_new(permanent_name, child_baseline, child_w, child_preset);
     if (!child) {
         free(permanent_name);
         printf("  [mitosis] cave_new failed for child %s\n", child_name);
@@ -1158,8 +1324,9 @@ static Cave* colony_mitosis(const Cave* pa, const Cave* pb, const char* preset_n
     colony_add(child);
     g_children_born++;
 
-    printf("\n  *** MITOSIS: %s × %s → %s (fitness %.2f × %.2f, floor %.2f) ***\n\n",
-           pa->field.name, pb->field.name, child_name,
+    printf("\n  *** MITOSIS: %s (%s) × %s (%s) → %s (%s, fitness %.2f × %.2f, floor %.2f) ***\n\n",
+           pa->field.name, pa_preset, pb->field.name, pb_preset,
+           child_name, child_preset,
            cave_fitness(pa), cave_fitness(pb), child_baseline);
     return child;
 }
