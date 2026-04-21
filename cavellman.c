@@ -658,6 +658,7 @@ typedef struct {
     CaveVocab* vocab;
     CaveField  field;
     int        owns_vocab;
+    int        is_founder;   /* A and B — shielded from pressure death forever */
 } Cave;
 
 static Cave* g_colony[COLONY_MAX];
@@ -956,17 +957,23 @@ static void colony_remove(int idx) {
 #define MITOSIS_COOLDOWN_TICKS   500   /* min ticks between successful births */
 #define MITOSIS_MIN_CPT_DONE     1     /* each parent must have survived ≥1 microtrain */
 #define MITOSIS_MIN_TOTAL_TURNS  120   /* and taken ≥120 turns in the ring */
-#define NEWBORN_IMMUNITY_TICKS   500   /* child cannot be culled for its first N ticks */
+#define NEWBORN_IMMUNITY_TICKS   800   /* child cannot be culled for its first N ticks */
 
 static int g_mitosis_cooldown = 0;
 static int g_children_born    = 0;
 
-/* Fitness score — higher = more likely to be picked as a parent. */
+/* Fitness score — higher = more likely to be picked as a parent,
+ * and less likely to be culled under pressure. Age contributes both
+ * a linear term and a square-root term so senior caves (A, B, C1…)
+ * don't get trivially outscored by a single well-resonated newborn. */
 static float cave_fitness(const Cave* c) {
     const CaveField* f = &c->field;
     if (f->total_count <= 0) return 0.0f;
     float speak_ratio = (float)f->spoke_count / (float)f->total_count;
-    return f->total_count * 0.01f
+    float age_linear  = f->total_count * 0.01f;
+    float age_sqrt    = 2.0f * sqrtf((float)f->total_count);
+    return age_linear
+         + age_sqrt
          + f->microtrain_done_count * 10.0f
          + f->mass_resonance * 0.5f
          + speak_ratio * 5.0f;
@@ -1086,13 +1093,16 @@ static Cave* colony_mitosis(const Cave* pa, const Cave* pb, const char* preset_n
     return child;
 }
 
-/* Find the lowest-fitness non-immune cave and remove it. Returns 1 if
- * a cave was culled, 0 if no victim was eligible (ring is all-immune). */
+/* Find the lowest-fitness cullable cave and remove it. Founders (A, B)
+ * are permanent — they anchor the lineage and cannot be culled, no matter
+ * how weak they drift. Newborns with immunity_ticks > 0 are also spared.
+ * Returns 1 if a cave was culled, 0 if no victim was eligible. */
 static int colony_pressure_death(void) {
     int   victim_i = -1;
     float victim_s = 1e30f;
     for (int i = 0; i < g_colony_n; i++) {
         const Cave* c = g_colony[i];
+        if (c->is_founder) continue;
         if (c->field.immunity_ticks > 0) continue;
         float s = cave_fitness(c);
         if (s < victim_s) { victim_s = s; victim_i = i; }
@@ -1681,6 +1691,8 @@ int main(int argc, char** argv) {
     if (!A) { printf("Failed to load founder A from %s\n", weights_a); return 1; }
     Cave* B = cave_new("B", 0.60f, weights_b, preset_name);   /* introvert */
     if (!B) { printf("Failed to load founder B from %s\n", weights_b); cave_free(A); return 1; }
+    A->is_founder = 1;
+    B->is_founder = 1;
     colony_add(A);
     colony_add(B);
 
