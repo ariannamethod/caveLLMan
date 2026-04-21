@@ -1191,6 +1191,71 @@ static void dna_write_cave(const Cave* c, const int* tokens, int len) {
 }
 
 /*
+ * Build a mixed microtrain corpus = this cave's holding buffer + a
+ * random sample of consumed dna/ files (stamped .learned by the
+ * learner thread). The cave's CPT burst consolidates not only its
+ * own recent experience but also the colony's shared voice — which
+ * is Oleg's point of DNA exchange translated into notorch training.
+ * Returns bytes written, or -1 on failure. DNA_SAMPLES_PER_BURST
+ * sets how many .learned files we fold in.
+ */
+#define DNA_SAMPLES_PER_BURST   8
+
+static long build_microtrain_corpus(const char* holding_path, const char* out_path) {
+    FILE* fo = fopen(out_path, "wb");
+    if (!fo) return -1;
+
+    /* 1. Copy holding content verbatim. */
+    long total = 0;
+    FILE* fh = fopen(holding_path, "rb");
+    if (fh) {
+        char buf[4096];
+        size_t n;
+        while ((n = fread(buf, 1, sizeof(buf), fh)) > 0) {
+            fwrite(buf, 1, n, fo);
+            total += (long)n;
+        }
+        fclose(fh);
+    }
+
+    /* 2. Sample N random .learned files in dna/. Scan once, collect names,
+     *    then pick DNA_SAMPLES_PER_BURST indices at random. */
+    DIR* d = opendir(DNA_DIR);
+    if (d) {
+        char names[256][64];
+        int  n_names = 0;
+        struct dirent* ent;
+        while ((ent = readdir(d)) != NULL && n_names < 256) {
+            int nl = (int)strlen(ent->d_name);
+            if (nl < 9 || strcmp(ent->d_name + nl - 8, ".learned") != 0) continue;
+            if (nl >= (int)sizeof(names[0])) continue;
+            strcpy(names[n_names++], ent->d_name);
+        }
+        closedir(d);
+
+        int k = (n_names < DNA_SAMPLES_PER_BURST) ? n_names : DNA_SAMPLES_PER_BURST;
+        for (int i = 0; i < k; i++) {
+            int idx = rand() % n_names;
+            char p[1024];
+            snprintf(p, sizeof(p), "%s/%s", DNA_DIR, names[idx]);
+            FILE* fd = fopen(p, "rb");
+            if (!fd) continue;
+            char buf[4096];
+            size_t n;
+            fprintf(fo, "\n"); /* SPA boundary between samples */
+            while ((n = fread(buf, 1, sizeof(buf), fd)) > 0) {
+                fwrite(buf, 1, n, fo);
+                total += (long)n;
+            }
+            fclose(fd);
+        }
+    }
+
+    fclose(fo);
+    return total;
+}
+
+/*
  * Append a heard/spoken token sequence to the field's holding file as a
  * sentence (glyph names separated by spaces, terminated by a period so
  * the SPA splitter sees a phonon boundary). Also updates mass counters.
@@ -1336,12 +1401,19 @@ static void field_microtrain_tick(CaveField* f, CaveModel* m) {
     if (f->mass_novelty     < MICRO_MIN_NOVELTY)   return;
     if (f->mass_resonance   < MICRO_MIN_RESONANCE) return;
 
-    /* All three tripped — fork child */
+    /* All three tripped — build mixed corpus (holding + sampled dna/) and fork. */
+    char mixed_path[640];
+    snprintf(mixed_path, sizeof(mixed_path), "feed/%s_micro_mix.txt", f->name);
+    long mix_bytes = build_microtrain_corpus(f->holding_path, mixed_path);
+    if (mix_bytes <= 0) mix_bytes = f->mass_bytes;  /* fall back to holding */
+
     pid_t pid = fork();
     if (pid == 0) {
-        /* Child: run train_cavellman as CPT on holding text */
+        /* Child: run train_cavellman on the mixed corpus (own speech +
+         * colony DNA sample) so this CPT burst consolidates what the
+         * entire ring has been writing, not just this cave's buffer. */
         execlp("./train_cavellman", "train_cavellman",
-               "--dataset",    f->holding_path,
+               "--dataset",    mixed_path,
                "--preset",     f->preset_name,
                "--steps",      MICRO_TRAIN_STEPS,
                "--start-from", f->weights_path,
@@ -1357,6 +1429,8 @@ static void field_microtrain_tick(CaveField* f, CaveModel* m) {
     }
     f->microtrain_active = 1;
     f->microtrain_pid = pid;
+    printf("  [%s] microtrain corpus = %ld bytes (own holding + %d DNA samples)\n",
+           f->name, mix_bytes, DNA_SAMPLES_PER_BURST);
     printf("\n  [%s] microtrain spawned (pid=%d, %ld bytes / nov %.1f / res %.1f)\n\n",
            f->name, pid, f->mass_bytes, f->mass_novelty, f->mass_resonance);
 }
