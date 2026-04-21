@@ -487,9 +487,14 @@ static float* model_forward(CaveModel* m, int token_id, int pos) {
 
     /* Final norm + head */
     rmsnorm(xn, x, m->rms_f->data, E);
-    int Vp = MAX_VOCAB;
-    float* logits = (float*)calloc(Vp, sizeof(float));
-    matvec(logits, m->head->data, xn, Vp, E);
+    /* Output vocab dimension comes from the head tensor on disk — not MAX_VOCAB.
+     * Reading MAX_VOCAB rows out of a V-sized head walks past the tensor,
+     * which is benign on some release-build heap layouts and a segfault on
+     * others. Always read exactly what the tensor contains. */
+    int Vp_actual = m->head->len / E;
+    if (Vp_actual > MAX_VOCAB) Vp_actual = MAX_VOCAB;
+    float* logits = (float*)calloc(MAX_VOCAB, sizeof(float));
+    matvec(logits, m->head->data, xn, Vp_actual, E);
     return logits;
 }
 
@@ -642,6 +647,10 @@ typedef struct {
     int   microtrain_active;
     pid_t microtrain_pid;
     int   microtrain_done_count;
+
+    /* Pressure death: newborns get N ticks of immunity so they're not
+     * culled before having a chance to prove themselves in the ring. */
+    int   immunity_ticks;
 } CaveField;
 
 typedef struct {
@@ -852,6 +861,7 @@ static void field_init(CaveField* f, const char* name, float baseline,
     f->microtrain_pid = -1;
     f->microtrain_done_count = 0;
     f->preset_name = preset_name;
+    f->immunity_ticks = 0;  /* founders start with no immunity; mitosis grants it */
 
     mkdir("feed", 0755);
     snprintf(f->holding_path, sizeof(f->holding_path), "feed/%s_holding.txt", name);
@@ -914,8 +924,6 @@ static int colony_add(Cave* c) {
     return g_colony_n - 1;
 }
 
-/* Unused today; pressure_death will call this when colony overflows. */
-static void colony_remove(int idx) __attribute__((unused));
 static void colony_remove(int idx) {
     if (idx < 0 || idx >= g_colony_n) return;
     cave_free(g_colony[idx]);
@@ -945,9 +953,10 @@ static void colony_remove(int idx) {
  * (all caves share the 88 canonical glyphs).
  */
 
-#define MITOSIS_COOLDOWN_TICKS   500
+#define MITOSIS_COOLDOWN_TICKS   500   /* min ticks between successful births */
 #define MITOSIS_MIN_CPT_DONE     1     /* each parent must have survived ≥1 microtrain */
 #define MITOSIS_MIN_TOTAL_TURNS  120   /* and taken ≥120 turns in the ring */
+#define NEWBORN_IMMUNITY_TICKS   500   /* child cannot be culled for its first N ticks */
 
 static int g_mitosis_cooldown = 0;
 static int g_children_born    = 0;
@@ -1031,8 +1040,11 @@ static int copy_file(const char* src, const char* dst) {
 static Cave* colony_mitosis(const Cave* pa, const Cave* pb, const char* preset_name) {
     if (!pa || !pb || g_colony_n >= COLONY_MAX) return NULL;
 
-    char child_name[8];
-    snprintf(child_name, sizeof(child_name), "%c", 'A' + g_colony_n);  /* C, D, E, ... */
+    /* Name from a monotone birth counter so siblings are never aliased
+     * even if their parents get culled between their births. A and B
+     * are reserved for the two founders; every child is C1, C2, C3, … */
+    char child_name[16];
+    snprintf(child_name, sizeof(child_name), "C%d", g_children_born + 1);
 
     char child_w[512], child_v[512], child_j[512];
     char parent_v[512], parent_j[512];
@@ -1064,6 +1076,7 @@ static Cave* colony_mitosis(const Cave* pa, const Cave* pb, const char* preset_n
         printf("  [mitosis] cave_new failed for child %s\n", child_name);
         return NULL;
     }
+    child->field.immunity_ticks = NEWBORN_IMMUNITY_TICKS;
     colony_add(child);
     g_children_born++;
 
@@ -1073,13 +1086,33 @@ static Cave* colony_mitosis(const Cave* pa, const Cave* pb, const char* preset_n
     return child;
 }
 
+/* Find the lowest-fitness non-immune cave and remove it. Returns 1 if
+ * a cave was culled, 0 if no victim was eligible (ring is all-immune). */
+static int colony_pressure_death(void) {
+    int   victim_i = -1;
+    float victim_s = 1e30f;
+    for (int i = 0; i < g_colony_n; i++) {
+        const Cave* c = g_colony[i];
+        if (c->field.immunity_ticks > 0) continue;
+        float s = cave_fitness(c);
+        if (s < victim_s) { victim_s = s; victim_i = i; }
+    }
+    if (victim_i < 0) return 0;
+
+    printf("\n  *** PRESSURE DEATH: %s culled (fitness %.2f, colony full) ***\n\n",
+           g_colony[victim_i]->field.name, victim_s);
+    colony_remove(victim_i);
+    return 1;
+}
+
 /* Once-per-tick check. If conditions are met, pick the two fittest
- * caves and spawn a child. Resets the cooldown. */
+ * caves and spawn a child. When the ring is full, cull the weakest
+ * non-immune cave first to make room. Resets the cooldown. */
 static void colony_try_mitosis(const char* preset_name) {
     if (g_mitosis_cooldown > 0) { g_mitosis_cooldown--; return; }
-    if (g_colony_n < 2 || g_colony_n >= COLONY_MAX) return;
+    if (g_colony_n < 2) return;
 
-    /* Score every cave; pick top two. */
+    /* Score every cave; pick top two eligible parents. */
     int   best_i = -1, second_i = -1;
     float best_s = -1.0f, second_s = -1.0f;
     for (int i = 0; i < g_colony_n; i++) {
@@ -1095,6 +1128,30 @@ static void colony_try_mitosis(const char* preset_name) {
         }
     }
     if (best_i < 0 || second_i < 0) return;
+
+    /* Ring full? Try to free a slot by culling the weakest non-immune cave.
+     * If everybody is immune, skip this round and wait for the cooldown
+     * to expire naturally. */
+    if (g_colony_n >= COLONY_MAX) {
+        /* Don't cull either prospective parent — find victim among the rest. */
+        int saved_imm_a = g_colony[best_i]->field.immunity_ticks;
+        int saved_imm_b = g_colony[second_i]->field.immunity_ticks;
+        g_colony[best_i]->field.immunity_ticks = 1;
+        g_colony[second_i]->field.immunity_ticks = 1;
+        int culled = colony_pressure_death();
+        /* Restore (indices may have shifted if victim was below them). */
+        /* Safest: look up by pointer identity after the cull. */
+        if (culled) {
+            /* Re-score and re-pick parents after the cull (pointers still valid). */
+            g_mitosis_cooldown = MITOSIS_COOLDOWN_TICKS / 2;  /* try again soon */
+            (void)saved_imm_a; (void)saved_imm_b;  /* survivors' immunity stays as-is */
+            return;
+        }
+        /* Nobody could be culled — restore immunities and give up this tick. */
+        g_colony[best_i]->field.immunity_ticks = saved_imm_a;
+        g_colony[second_i]->field.immunity_ticks = saved_imm_b;
+        return;
+    }
 
     if (colony_mitosis(g_colony[best_i], g_colony[second_i], preset_name))
         g_mitosis_cooldown = MITOSIS_COOLDOWN_TICKS;
@@ -1532,11 +1589,13 @@ static void colony_main(float temp, float top_p, const char* preset_name) {
             last_len = gn;
         }
 
-        /* 3/4/5. Decay, maturity drift, microtrain — for every cave */
+        /* 3/4/5. Decay, maturity drift, microtrain, immunity countdown. */
         for (int ci = 0; ci < g_colony_n; ci++) {
             field_decay(&g_colony[ci]->field);
             field_maturity_drift(&g_colony[ci]->field);
             field_microtrain_tick(&g_colony[ci]->field, g_colony[ci]->model);
+            if (g_colony[ci]->field.immunity_ticks > 0)
+                g_colony[ci]->field.immunity_ticks--;
         }
 
         /* 5b. Sexual mitosis — two fittest caves may spawn a child. */
