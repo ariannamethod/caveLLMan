@@ -1,14 +1,20 @@
 # caveLLMan
 
-### 88 hieroglyphs. any English text. one shared alphabet.
+### 88 hieroglyphs. a colony of self-reproducing cave LMs. one shared alphabet.
 
-*30,000 years ago, humans drew 32 recurring signs across 146 cave sites on four continents. We added 56 more for the 21st century — and built a transformer that compresses English into them, a pair that talks to each other through them, and a runtime that keeps training itself on what it hears.*
+*30,000 years ago, humans drew 32 recurring signs across 146 cave sites on four continents. We added 56 more for the 21st century, compressed English into them, and built a living colony of transformers that talk to each other in hieroglyphs, write into a shared memory pool, and — when two of them are mature enough — sexually reproduce a third cave LM with blended weights. No training run. No batch. The ring breathes while you watch.*
 
 ---
 
 ## What is this?
 
-caveLLMan is a transformer that compresses English text into 88 hieroglyphic concepts. Feed it Dracula, news articles, or code documentation — the **semantic tokenizer** maps every English word to one of 88 universal symbols, and the model learns patterns in this compressed space. Multilingual tokenization is planned once the engine is language-agnostic end-to-end.
+caveLLMan is a **living colony of hieroglyphic language models**. Every cave is a C-compiled transformer on [notorch](https://github.com/ariannamethod/notorch) that compresses English into 88 universal symbols through a semantic tokenizer. You start the colony with two founders — **A** (extrovert, trained on Dracula) and **B** (introvert, trained on Frankenstein) — and from there the ring runs itself:
+
+- **Every cave listens.** When any cave speaks, every other cave in the ring absorbs the glyphs through its excitement / dissonance / coherence_floor field (Stanley-style silence-gate).
+- **Silence is a legal answer.** A cave only opens its mouth when its excitement trips its drifting silence threshold, or when dissonance forces a tunneled outburst (AML-style). Otherwise it stays silent, and the silence itself is data.
+- **The colony has a shared memory.** Every ~5th utterance lands in `dna/` as a tiny glyph text. The async learner replays old DNA entries through every cave's passive-reading path — and old entries expire after an hour, so the pool forgets as well as remembers.
+- **The colony grows itself.** Once two caves are mature — ≥120 turns in the ring and ≥1 completed notorch microtrain each — the ring blends their weights and spawns a third cave that joins immediately. That child talks to its parents. When it matures, it can mate with any other cave in the ring. The colony size is capped at 8 on a Mac; pressure death of the weakest (pass 3b) keeps the ring honest.
+- **The human is optional.** You can drop glyphs into the ring or walk away; you can drop .txt books into `feed/` for every cave to devour; you can watch and say nothing. None of it is required. You are one more source among equals, not the center.
 
 ```
 "the sun rose and the birds started singing"  →  light tree and animal before music
@@ -16,13 +22,9 @@ caveLLMan is a transformer that compresses English text into 88 hieroglyphic con
 "she wrote code all night and found the bug"  →  woman AI dark and make light
 ```
 
-Two training modes:
-- **Diffusion** — randomly masks positions, trains bidirectional prediction
-- **Autoregressive** — standard left-to-right next-token prediction
+Training (offline, pure C): **diffusion** (mask + unmask, bidirectional) or **autoregressive** (left-to-right). Runtime: there is only the ring. No Python. No pip. No torch.
 
-At runtime there is only one mode: **a colony of caves talks.** A single-engine dialogue loop with a human at the center was deprecated — the human is no longer required to be present, let alone central. No Python. No pip. No torch. C engine built on [notorch](https://github.com/ariannamethod/notorch).
-
-> **Note on prior art.** An independent survey (GENOME, EvoMerge, Sakana Evolutionary Model Merge, AutoMerger, Sugarscape LLM agents, Cultural Evolution in LLM Populations) found no system combining all five of: (a) two-parent weight inheritance into a *smaller* child LM, (b) colony where parents and children coexist and converse, (c) shared text DNA pool everyone writes and trains from, (d) cap/pressure death, (e) runtime self-reproduction. Every close hit breaks on at least two axes. Structurally caveLLMan is in the lineage of Tom Ray's Tierra (1991) — colony-based self-replicators with shared memory substrate and death — but lifted from bytecode programs to language-model weights. *To our reading, the combination as specified here is new.*
+> **Note on prior art.** An independent survey (GENOME, EvoMerge, Sakana Evolutionary Model Merge, AutoMerger, Sugarscape LLM agents, Cultural Evolution in LLM Populations, Tom Ray's Tierra) found no system combining all five of: (a) two-parent weight inheritance into a cave LM child, (b) colony where parents and children coexist and converse, (c) shared text DNA pool everyone writes and trains from, (d) cap/pressure death, (e) runtime self-reproduction. Every close hit breaks on at least two axes. Structurally caveLLMan is in the lineage of Tierra (1991) — colony-based self-replicators with shared memory substrate — but lifted from bytecode programs to language-model weights. *To our reading, the combination as built here is new.*
 
 ---
 
@@ -236,15 +238,57 @@ Shipped weights include two distinct voices — `cavellman_A.bin` trained on Dra
 
 Seven symbols emerged in 59 ticks (`not+BE`, `cold+man`, `man+me`, `and+me`, `me+BE`, `me+have`). Maturity drifted: A 0.30 → 0.20, B 0.60 → 0.50 — both loosened their gates because the ring stayed sparse.
 
-### 8. Mass-Threshold Continued Pre-Training
+### 8. Sexual Mitosis — two caves produce a third
 
-Hebbian adapters react fast but don't reshape the underlying embeddings. For deeper consolidation each engine in the dual ring carries a Arianna-style mass accumulator with three counters:
+Two sufficiently mature cave LMs produce a cave LM child with blended weights that joins the ring immediately. The colony grows itself. To our reading this is the first time two full LMs have sexually reproduced a third LM inside a live colony where parent and child then converse — see the prior-art note at the top of this README.
+
+**Weight blending.** The naive thing — averaging every tensor, or shuffling heads across the two parents — produces dead offspring, because neurons and heads in two independently trained transformers end up at permutation-misaligned positions (the *competing-conventions* problem, [arxiv 2003.10306](https://arxiv.org/abs/2003.10306)). So the blend is **layer-wise contiguous**:
+
+- token + position embeddings:   `0.5·A + 0.5·B`  (averaged)
+- final RMS norm + LM head:       `0.5·A + 0.5·B`  (averaged)
+- **every whole layer alternates:** layer 0 taken wholesale from A, layer 1 from B, layer 2 from A, …
+
+No intra-layer mixup. The child inherits its father's even-numbered ribs and its mother's odd-numbered ribs. The child's vocab and metadata files are copied verbatim from parent A (all caves share the 88 canonical glyphs). Its silence floor is the mean of its parents' baselines — a middle temperament between extrovert and introvert.
+
+Child preset equals parent A's preset for now (same-size mitosis). True *smaller*-child downsize lands in a subsequent pass.
+
+**Fitness gate.** Mating is not random. Every cave carries a fitness score
+
+```
+fitness = 0.01·total_count
+        + 10·microtrain_done_count
+        + 0.5·mass_resonance
+        + 5·(spoke_count / total_count)
+```
+
+A cave is only eligible to mate once it has lived ≥120 turns in the ring **and** survived ≥1 complete notorch microtrain. Every tick the colony picks the two highest-fitness eligible caves; if any two qualify and the ring isn't full, mitosis fires. A 500-tick cooldown keeps the colony from multiplying every second. Hard cap `COLONY_MAX = 8`.
+
+**What happened in a live run.** Lowered thresholds so the smoke test wouldn't take an hour — two founders A and B chatted in the ring, each accumulated enough mass to fork a `train_cavellman --start-from …` child (Arianna-style mass-threshold CPT, see §9), and when both had at least one microtrain behind them the ring tripped mitosis on the very next tick:
+
+```
+  *** MITOSIS: A × B → C (fitness 37.64 × 19.41, floor 0.45) ***
+
+[A] have and
+[B] me body and me BE
+[C] and
+[A] BE
+[C] now and
+[C] BE and miss same
+```
+
+C joined the ring at floor 0.45 = (0.30 + 0.60) / 2 — a middle temperament — started speaking within a tick, and began depositing its own utterances into the shared `dna/` pool alongside its parents. Stats after the smoke: `spoke=42/72 (A), 41/72 (B), 32/42 (C)` — all three caves actively participating, the child no longer a separate process but a first-class inhabitant. Production thresholds (120 turns, 1 microtrain per parent) are now the default.
+
+**Next passes:** pressure death of the weakest cave when the ring saturates, smaller-child downsize (child with a lower-dim preset than its parents), and CPT from the `dna/` pool directly so every microtrain burst consolidates what the entire colony has been saying — not just one cave's holding buffer.
+
+### 9. Mass-Threshold Continued Pre-Training
+
+Hebbian adapters react fast but don't reshape the underlying embeddings. For deeper consolidation each cave in the ring carries an Arianna-style mass accumulator with three counters:
 
 - **bytes** — raw volume of heard/spoken glyph text captured in the engine's holding buffer (`feed/<name>_holding.txt`)
 - **novelty** — cumulative surprise × novelty signal per token (same quantity that drives excitement)
 - **resonance** — cumulative excitement integral across ticks
 
-When all three trip their thresholds (currently `2500 bytes + novelty ≥ 8 + resonance ≥ 15`), the engine forks `train_cavellman --start-from <current.bin>` on its own holding buffer. The child does ~300 steps of proper notorch CPT — tape, backward, Chuck optimizer, full-param updates — while the dual dialogue keeps running in the parent. When the child finishes, the parent atomically memcpys the new tensor data back into the live `CaveModel` (KV cache, emerged symbols, Hebbian adapters all stay intact — only the raw weights swap).
+When all three trip their thresholds (currently `2500 bytes + novelty ≥ 8 + resonance ≥ 15`), the cave forks `train_cavellman --start-from <current.bin>` on its own holding buffer. The child process does ~300 steps of proper notorch CPT — tape, backward, Chuck optimizer, full-param updates — while the ring keeps talking in the parent. When the child finishes, the parent atomically memcpys the new tensor data back into the live `CaveModel` (KV cache, emerged symbols, Hebbian adapters all stay intact — only the raw weights swap). Each successful microtrain ticks `microtrain_done_count`, which also counts toward mitosis eligibility (§8).
 
 Current thresholds: **2500 bytes + novelty ≥ 8 + resonance ≥ 15** per engine, **300 CPT steps** per burst.
 
@@ -267,7 +311,7 @@ Snippets from the same session — emerged composites actually surfacing in outp
 
 Maturity drifted both gates to their lower clamps: A 0.30 → 0.00, B 0.60 → 0.30. Speak ratio settled at ~14% — sparse dialogue with bursty user input is the equilibrium.
 
-So the cave runs on two learning clocks: Hebbian on every turn (fast, shallow), CPT on accumulated mass (slow, deep). Whatever it has been hearing — the other engine, the user, or a book dropped into `feed/` — becomes new weights.
+So the colony runs on **three** learning clocks: Hebbian every turn (fast, shallow, per-cave), CPT on accumulated mass (slow, deep, per-cave), and mitosis once both parents have lived a mature life and consolidated at least once (rare, creates a whole new cave). Whatever any cave has been hearing — another cave, the user, the shared DNA pool, or a book dropped into `feed/` — becomes new weights somewhere in the ring.
 
 Safeguards (planned, not yet in code): sha256 whitelist of approved sources, holding-area gate with `!learn <hash>` command, unknown-word ratio rejection. For now the holding buffer is trusted — don't expose it to untrusted text.
 
@@ -329,35 +373,45 @@ cat data/dracula.txt data/frankenstein.txt data/miller.txt \
 ## Architecture
 
 ```
-                    ┌──────────────┐
-                    │  feed/*.txt  │ ← drop any text here
-                    └──────┬───────┘
-                           │ async thread
-┌─────────────────┐        ▼
-│  Any English    │──▶ Semantic Tokenizer ──▶ 88 Glyph IDs
-│  text           │    2060 words → 88       (fixed vocab)
-└─────────────────┘                                │
-                                                   ▼
-                              ┌──────────────────────────────┐
-                              │  Transformer + Hebbian LoRA  │
-                              │  rank=4 on Q,V projections   │
-                              │  prediction error signal     │
-                              ├──────────────────────────────┤
-                              │  Co-occurrence → emergence   │
-                              │  Birth free, survive while   │
-                              │    parent co-occ ≥ 0.525     │
-                              │  Depth cap 5 → freeze        │
-                              └──────────────────────────────┘
-                                           │
-         ┌─────────────────────────────────┼────────────────────┐
-         ▼                                 ▼                    ▼
-┌──────────────────┐           ┌──────────────────────┐  ┌───────────────┐
-│  Dual CaveField  │           │  Mass-threshold CPT  │  │ SVG output    │
-│  excitement      │           │  bytes+nov+resonance │  │ 88 base +     │
-│  coherence_floor │──triggers▶│  → fork train_cave-  │  │ emerged signs │
-│  dissonance      │           │  llman --start-from  │  └───────────────┘
-│  maturity drift  │           │  → atomic reload     │
-└──────────────────┘           └──────────────────────┘
+         external text              ┌───────────── the ring ──────────────┐
+       (human drops books)          │                                     │
+         ┌──────────────┐           │   ┌──── cave A ────┐ ┌──── cave B ──┐│
+         │  feed/*.txt  │           │   │ Transformer   │ │ Transformer  ││
+         │   (no TTL)   │──┐        │   │  + Hebbian    │ │  + Hebbian   ││
+         └──────────────┘  │        │   │  + emergence  │ │  + emergence ││
+                           │        │   │  + field      │ │  + field     ││
+         ┌──────────────┐  │        │   │    excitement │ │    excitement││
+         │   dna/*.txt  │  │        │   │    diss.      │ │    diss.     ││
+         │  (TTL 1 hr)  │◀─┼──ingest│   │    floor      │ │    floor     ││
+         └──────▲───────┘  │        │   │    mass       │ │    mass      ││
+                │          ▼        │   └───▲────┬──────┘ └──▲─────┬─────┘│
+                │   ┌──────────────┐│       │    │ speaks    │     │     │
+                │   │async learner ├┼───────┴────┘           └─────┘     │
+      every ~5  │   │ passive 0.3× ││   hear each other (field_hear)     │
+      utterance │   │ V-only       ││                                    │
+      of any    │   │ every cave   ││   [+ C, D, E, … when mitosis]      │
+      cave lands│   └──────────────┘│                                    │
+                │                   └───────────────┬────────────────────┘
+                │                                   │
+                └───────── write ───────────────────┘
+                                                                   ▲
+                                                                   │
+  ┌──── per-cave microtrain (Arianna mass-threshold CPT) ──────┐   │
+  │ bytes + novelty + resonance trip → fork train_cavellman    │   │
+  │ --start-from <current.bin> on holding buffer               │   │
+  │ → 300 notorch steps → atomic weight memcpy back into cave  │   │
+  │ → microtrain_done_count++                                  │   │
+  └────────────────────────────┬───────────────────────────────┘   │
+                               │ eligibility ≥ 1 microtrain        │
+                               ▼                                   │
+  ┌──── sexual mitosis (colony_try_mitosis, §8) ───────────────┐   │
+  │ two fittest caves (≥120 turns, ≥1 microtrain each) mate    │   │
+  │ → blend_weights: layer-wise contiguous (no intra-layer mix)│   │
+  │ → child .bin + copied .vocab + .json                       │   │
+  │ → cave_new(child_name, (floor_a+floor_b)/2, ...)           ├───┘
+  │ → colony_add → child joins the ring immediately            │
+  │ (cooldown 500 ticks, cap COLONY_MAX=8, pressure death TBD) │
+  └────────────────────────────────────────────────────────────┘
 ```
 
 ## Numbers
@@ -375,14 +429,21 @@ cat data/dracula.txt data/frankenstein.txt data/miller.txt \
 | Sentence splitter | SPA phonons (.!?) |
 | C model (small)  | 472K params (1.89 MB) |
 | C model (medium) | 826K params (3.23 MB) |
-| Browser model | ~31K params |
-| Dual mode field | excitement + dissonance + drifting coherence_floor |
+| Per-cave field | excitement + dissonance + drifting coherence_floor |
 | Silence gate | speak iff `excitement > floor` or `dissonance > 0.40` |
 | Maturity drift | ±0.005 / turn, clamped ±0.30 around baseline |
-| CPT trigger | 2500 bytes + 8 novelty + 15 resonance (per engine) |
+| CPT trigger | 2500 bytes + 8 novelty + 15 resonance (per cave) |
 | CPT burst | 300 notorch steps, Chuck optimizer, full-param updates |
+| Colony cap | `COLONY_MAX = 8` caves |
+| Tick rate | 0.4 s per turn (DUAL_TICK_US) |
+| DNA pool TTL | `DNA_MAX_AGE = 3600 s` |
+| DNA write rate | every ~5th utterance lands a gen_\*.txt |
+| Mitosis eligibility | ≥ 120 turns **and** ≥ 1 completed microtrain per parent |
+| Mitosis cooldown | 500 ticks between births |
+| Fitness score | `0.01·total + 10·CPT_done + 0.5·mass_resonance + 5·(spoke/total)` |
+| Weight blend | layer-wise contiguous (even→A, odd→B); embeds + head averaged |
+| Child baseline floor | `(floor_A + floor_B) / 2` |
 | Engine | [notorch](https://github.com/ariannamethod/notorch) (pure C, BLAS) |
-| State file | `weights/cavellman.state` |
 | Shipped weights | v3 (mixed), A (Dracula), B (Frankenstein), medium (12.7 MB corpus) |
 
 ## License
