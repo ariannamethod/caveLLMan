@@ -59,6 +59,28 @@ static const Preset PRESETS[] = {
 };
 #define N_PRESETS 5
 
+/* Look up a preset by name; returns NULL if unknown. */
+static const Preset* find_preset(const char* name) {
+    if (!name) return NULL;
+    for (int i = 0; i < N_PRESETS; i++)
+        if (strcmp(PRESETS[i].name, name) == 0) return &PRESETS[i];
+    return NULL;
+}
+
+/* Push preset dims into the globals (does not touch any model). */
+static void set_globals_from_preset(const Preset* pr) {
+    if (!pr) return;
+    E = pr->embd; H = pr->heads; HD = E / H; FFN_D = 4 * E;
+    N_L = pr->layers; CTX = pr->ctx;
+}
+
+/* Next-smaller preset by name. medium→small→standard→micro→tiny→tiny. */
+static const char* smaller_preset_name(const char* pname) {
+    for (int i = 1; i < N_PRESETS; i++)
+        if (strcmp(PRESETS[i].name, pname) == 0) return PRESETS[i-1].name;
+    return pname;   /* already at tiny, or unknown — no downsize */
+}
+
 /* ── Vocab (base 88 + emerged) ──────────────────────────────────────────── */
 
 typedef struct {
@@ -112,6 +134,12 @@ typedef struct {
     nt_tensor* rms_f;
     nt_tensor* head;
 
+    /* Per-cave architecture — caves in the colony can have different
+     * sizes (smaller children grow out of same-size parents via mitosis
+     * downsize). Every model_forward call swaps the global dim vars to
+     * these values on entry so the existing helpers keep working. */
+    int E, H, HD, FFN_D, N_L, CTX;
+
     /* Hebbian state */
     CoOccurrence cooccur;
     EmergedSymbol emerged[MAX_EMERGED];
@@ -119,6 +147,20 @@ typedef struct {
     float hebbian_lr;
     float hebbian_decay;
 } CaveModel;
+
+/* Helper: push/pop the global dim vars from a model. Every hot path
+ * that reads E/N_L/... starts with DIMS_ENTER(m) and exits via
+ * DIMS_LEAVE(). Safe because all model_forward / model_load calls
+ * happen under g_learner.lock — single-threaded. */
+#define DIMS_ENTER(m)   \
+    int _saved_E = E, _saved_H = H, _saved_HD = HD, \
+        _saved_FFN = FFN_D, _saved_NL = N_L, _saved_CTX = CTX; \
+    E = (m)->E; H = (m)->H; HD = (m)->HD; \
+    FFN_D = (m)->FFN_D; N_L = (m)->N_L; CTX = (m)->CTX
+
+#define DIMS_LEAVE()    \
+    E = _saved_E; H = _saved_H; HD = _saved_HD; \
+    FFN_D = _saved_FFN; N_L = _saved_NL; CTX = _saved_CTX
 
 /* ── Load vocab ─────────────────────────────────────────────────────────── */
 
@@ -339,7 +381,16 @@ static void alloc_hebbian(Layer* layer) {
 
 /* ── Model loading ──────────────────────────────────────────────────────── */
 
-static CaveModel* model_load(const char* weights_path, int V) {
+static CaveModel* model_load(const char* weights_path, const Preset* pr) {
+    if (!pr) {
+        printf("Error: model_load called with NULL preset\n");
+        return NULL;
+    }
+    /* Push this preset's dims into the globals before anything allocates
+     * against them (alloc_hebbian uses E, the expected-tensor count uses
+     * N_L, etc.). Caller does NOT need to swap first. */
+    set_globals_from_preset(pr);
+
     int n_loaded = 0;
     nt_tensor** loaded = nt_load(weights_path, &n_loaded);
     if (!loaded || n_loaded == 0) {
@@ -358,6 +409,12 @@ static CaveModel* model_load(const char* weights_path, int V) {
     m->layers = (Layer*)calloc(N_L, sizeof(Layer));
     m->hebbian_lr = 0.001f;
     m->hebbian_decay = 0.9999f;
+
+    /* Freeze this cave's dims. Future model_forward / hebbian_update swap
+     * the globals back to these on entry — so several caves with different
+     * presets can coexist in the ring. */
+    m->E = E; m->H = H; m->HD = HD;
+    m->FFN_D = FFN_D; m->N_L = N_L; m->CTX = CTX;
 
     int pi = 0;
     m->wte = loaded[pi++];
@@ -378,7 +435,8 @@ static CaveModel* model_load(const char* weights_path, int V) {
 
     cooccur_init(&m->cooccur);
 
-    printf("  loaded %d/%d tensors, Hebbian rank=%d\n", pi, n_loaded, HEBBIAN_RANK);
+    printf("  loaded %d/%d tensors, Hebbian rank=%d, preset=%s (E=%d L=%d)\n",
+           pi, n_loaded, HEBBIAN_RANK, pr->name, E, N_L);
     free(loaded);
     return m;
 }
@@ -424,6 +482,10 @@ static void apply_hebbian_lora(float* out, const float* A, const float* B,
 }
 
 static float* model_forward(CaveModel* m, int token_id, int pos) {
+    /* Swap the dim globals to this cave's architecture so helpers (matvec,
+     * rmsnorm, KV cache indexing) operate on the right shapes. Restored
+     * at the single exit point below. */
+    DIMS_ENTER(m);
     float x[256], xn[256], q[256], k[256], v[256];
     float attn_out[256], fc1[1024], fc2[256], proj[256];
 
@@ -495,6 +557,7 @@ static float* model_forward(CaveModel* m, int token_id, int pos) {
     if (Vp_actual > MAX_VOCAB) Vp_actual = MAX_VOCAB;
     float* logits = (float*)calloc(MAX_VOCAB, sizeof(float));
     matvec(logits, m->head->data, xn, Vp_actual, E);
+    DIMS_LEAVE();
     return logits;
 }
 
@@ -523,6 +586,7 @@ static float prediction_error_signal(CaveModel* m, float* logits, int actual_id,
 
 static void hebbian_update(CaveModel* m, float* last_logits, int vocab_size,
                            int* generated, int gen_len, int is_passive) {
+    DIMS_ENTER(m);
     for (int l = 0; l < N_L; l++) {
         Layer* ly = &m->layers[l];
         for (int g = 0; g < gen_len; g++) {
@@ -549,6 +613,7 @@ static void hebbian_update(CaveModel* m, float* last_logits, int vocab_size,
                            x_emb, dy, signal, m->hebbian_lr, m->hebbian_decay);
         }
     }
+    DIMS_LEAVE();
 }
 
 /* ── Top-p sampling ─────────────────────────────────────────────────────── */
@@ -882,6 +947,12 @@ static void field_init(CaveField* f, const char* name, float baseline,
  */
 static Cave* cave_new(const char* name, float baseline,
                       const char* weights_path, const char* preset_name) {
+    const Preset* pr = find_preset(preset_name);
+    if (!pr) {
+        printf("Error: unknown preset '%s'\n", preset_name ? preset_name : "(null)");
+        return NULL;
+    }
+
     Cave* c = (Cave*)malloc(sizeof(Cave));
     if (!c) return NULL;
     memset(c, 0, sizeof(Cave));
@@ -897,8 +968,8 @@ static Cave* cave_new(const char* name, float baseline,
     }
     c->owns_vocab = 1;
 
-    /* Model */
-    c->model = model_load(weights_path, c->vocab->vocab_size);
+    /* Model (model_load sets globals from preset, then saves dims into m) */
+    c->model = model_load(weights_path, pr);
     if (!c->model) {
         free(c->vocab); free(c); return NULL;
     }
@@ -1312,9 +1383,10 @@ static void field_hear(CaveField* f, CaveModel* m, int prev, int tok) {
  * async microtrain child finishes — we keep the CaveModel struct and all
  * its layers/KV caches intact, only the weight values swap. */
 static int microtrain_reload_weights(CaveField* f, CaveModel* m) {
+    /* Read shape counts from the model itself, not globals. */
     int n_loaded = 0;
     nt_tensor** loaded = nt_load(f->next_weights_path, &n_loaded);
-    if (!loaded || n_loaded < 4 + 8 * N_L) {
+    if (!loaded || n_loaded < 4 + 8 * m->N_L) {
         printf("  [%s] microtrain: failed to load %s (got %d tensors)\n",
                f->name, f->next_weights_path, n_loaded);
         if (loaded) {
@@ -1328,7 +1400,7 @@ static int microtrain_reload_weights(CaveField* f, CaveModel* m) {
     int pi = 0;
     params[pi++] = m->wte;
     params[pi++] = m->wpe;
-    for (int l = 0; l < N_L; l++) {
+    for (int l = 0; l < m->N_L; l++) {
         params[pi++] = m->layers[l].rms1;
         params[pi++] = m->layers[l].wq;
         params[pi++] = m->layers[l].wk;
