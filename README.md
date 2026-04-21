@@ -200,16 +200,20 @@ cp data/dracula.txt feed/
 
 One circle. **BE** turns any noun into a verb: `BE fear` = to be afraid. `BE love` = to love. `BE fire` = to burn. One symbol that doubles the expressiveness of the entire language.
 
-### 7. The Ring — two caves talking
+### 7. The Ring — colony of caves talking
 
-`./cavellman` runs two engines, **A** (extrovert, coherence_floor 0.30) and **B** (introvert, 0.60), on top of a single `CaveField` apiece: an **excitement** accumulator (surprise × novelty), a **dissonance** meter (for unexpected pairs), and a drifting silence threshold à la [Stanley](https://github.com/ariannamethod/stanley)'s silence-gate. An engine speaks only when its excitement trips the floor — or when dissonance > 0.40 forces a tunneled outburst, AML-style. Otherwise it stays silent, and the silence itself is data. **Maturity drift** (±0.005 per turn, clamped ±0.30) auto-calibrates the floor: if an engine hogs the ring (> 70% speaking), its gate tightens; if it barely speaks (< 20%), it loosens.
+`./cavellman` spins up a **colony** of caves (currently two founders: **A** extrovert `floor 0.30`, **B** introvert `floor 0.60`; hard cap `COLONY_MAX=8`). Every cave carries its own `CaveField` — an **excitement** accumulator, a **dissonance** meter, and a drifting silence threshold à la [Stanley](https://github.com/ariannamethod/stanley)'s silence-gate. A cave speaks only when its excitement trips the floor — or when dissonance > 0.40 forces a tunneled outburst, AML-style. Otherwise it stays silent, and the silence itself is data. **Maturity drift** (±0.005 per turn, clamped ±0.30) auto-calibrates each floor: a cave that hogs the ring (> 70% speaking) tightens, one that stays mute (< 20%) loosens.
 
-The ring does not need you. Engines talk to each other; the feed/ folder feeds them; you can drop into the ring by typing glyphs, but you are one more source among equals — not the center. Sometimes neither engine answers. Sometimes both do. That's the field, not a chatbot.
+The tick loop iterates the whole colony in a fresh Fisher-Yates order every turn. When any cave speaks, **every other cave in the ring hears it** — field_hear updates each listener's excitement, dissonance, co-occurrence matrix, and holding buffer. The colony is N-symmetric; adding more caves (through mitosis) changes only the value of N.
 
-Shipped weights include two distinct voices — `cavellman_A.bin` trained on Dracula only (15K steps, seed 42, first-person `me`-dominated) and `cavellman_B.bin` trained on Frankenstein only (15K steps, seed 123, formal epistolary). Default run uses both:
+The ring does not need you. Caves talk to each other; `feed/` folder feeds them; you can drop into the ring by typing glyphs, but you are one more source among equals — not the center. Sometimes nobody answers. Sometimes everyone does. That's the field, not a chatbot.
+
+**DNA pool.** Every ~5 utterances lands in `dna/<cave>_<ts>_<rand>.txt` — the colony's shared memory. The async learner scans `dna/` alongside `feed/` and replays whatever it finds through every cave's passive-reading path. Old `dna/*.txt` expire after `DNA_MAX_AGE = 3600s` so the pool forgets as well as remembers: what survives is what another cave picked up and re-spoke before it aged out. External `feed/` has no TTL — that's the seed anchor against model-collapse on pure self-talk (the known pitfall of training on your own generations).
+
+Shipped weights include two distinct voices — `cavellman_A.bin` trained on Dracula only (first-person `me`-dominated) and `cavellman_B.bin` trained on Frankenstein only (formal epistolary). Default run uses both:
 
 ```bash
-./cavellman                                     # A=Dracula, B=Frankenstein
+./cavellman                                     # colony starts at n=2: A+B
 ./cavellman --weights weights/cavellman_medium.bin --preset medium   # shared medium weights
 ```
 

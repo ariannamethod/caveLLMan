@@ -591,20 +591,84 @@ static int tokenize_prompt(const char* input, CaveVocab* vocab, int* tokens, int
 
 /* ── Save/load Hebbian state ────────────────────────────────────────────── */
 
+/* ── Ring physics types ─────────────────────────────────────────────────
+ *
+ * A ring of N caves (COLONY_MAX = 8 hard cap on Mac-scale). Each cave
+ * carries a CaveField — somatic accumulators (excitement, dissonance),
+ * a drifting coherence_floor (Stanley's silence-gate), and mass counters
+ * for the Arianna-style notorch microtrain CPT. The founders A and B
+ * just happen to be the first two; everything else (mitosis, death, DNA)
+ * treats them symmetrically.
+ */
+
+#define TUNNEL_THRESHOLD    0.40f  /* dissonance → forced speech */
+#define EXCITEMENT_DECAY    0.94f
+#define DISSONANCE_DECAY    0.90f
+#define EXCITEMENT_CAP      2.5f
+#define MATURITY_WINDOW     40
+#define MATURITY_STEP       0.005f
+#define MATURITY_CAP        0.30f
+#define SPEAK_RATIO_HIGH    0.70f
+#define SPEAK_RATIO_LOW     0.20f
+#define DUAL_TICK_US        400000 /* 0.4s per tick */
+#define DUAL_MAX_GEN        24
+
+#define MICRO_MIN_BYTES     2500
+#define MICRO_MIN_NOVELTY   8.0f
+#define MICRO_MIN_RESONANCE 15.0f
+#define MICRO_TRAIN_STEPS   "300"
+
+#define COLONY_MAX   8
+#define DNA_DIR      "dna"
+#define DNA_MAX_AGE  3600     /* seconds — older .txt files in dna/ expire */
+
+typedef struct {
+    float excitement;
+    float coherence_floor;
+    float baseline_floor;
+    float dissonance;
+    int   spoke_count;
+    int   total_count;
+    const char* name;
+
+    /* Mass threshold CPT (Arianna-style) */
+    long  mass_bytes;
+    float mass_novelty;
+    float mass_resonance;
+    char  holding_path[512];    /* feed/<name>_holding.txt */
+    char  weights_path[512];    /* current on-disk .bin for --start-from */
+    char  next_weights_path[512]; /* where child will save */
+    const char* preset_name;    /* pass to child */
+    int   microtrain_active;
+    pid_t microtrain_pid;
+    int   microtrain_done_count;
+} CaveField;
+
+typedef struct {
+    CaveModel* model;
+    CaveVocab* vocab;
+    CaveField  field;
+    int        owns_vocab;
+} Cave;
+
+static Cave* g_colony[COLONY_MAX];
+static int   g_colony_n = 0;
+
 /* ── Async self-learning thread ─────────────────────────────────────────── */
 
 /*
- * The ring has one shared feed/ directory. When a .txt file is dropped in,
- * BOTH caves hear the same text — a single world, two observers. This is
- * the only channel by which the human (or any external process) can
- * nudge learning: drop a file, walk away, let the caves devour it.
+ * The colony shares two text streams:
+ *   feed/  — external nudge (human drops a .txt here; all caves hear)
+ *   dna/   — the colony's own generated text; caves write their output
+ *             here and each other consume it on the next sweep.
+ * A single learner thread watches both. Every active cave absorbs
+ * whatever is dropped or produced — passive reading, 0.3× signal, V-only.
+ * Old .txt in dna/ expire after DNA_MAX_AGE so the pool forgets as well
+ * as remembers.
  */
 typedef struct {
-    CaveModel*  model_a;
-    CaveVocab*  vocab_a;
-    CaveModel*  model_b;
-    CaveVocab*  vocab_b;
-    const char* feed_dir;    /* directory to watch for .txt files */
+    const char* feed_dir;
+    const char* dna_dir;
     int         running;
     int         files_consumed;
     int         lines_learned;
@@ -656,18 +720,16 @@ static void learn_from_text(AsyncLearner* al, const char* text, int text_len) {
         if (n >= 2) {
             pthread_mutex_lock(&al->lock);
 
-            /* Both caves hear the same sentence — passive reading, 0.3x, V-only. */
-            hebbian_update(al->model_a, NULL, al->vocab_a->vocab_size + 2, tokens, n, 1);
-            count_emerged_usage(al->model_a, al->vocab_a, tokens, n);
-            cooccur_update(&al->model_a->cooccur, tokens, n);
-            check_symbol_survival(al->model_a, al->vocab_a);
-            try_emerge_symbol(al->model_a, al->vocab_a);
-
-            hebbian_update(al->model_b, NULL, al->vocab_b->vocab_size + 2, tokens, n, 1);
-            count_emerged_usage(al->model_b, al->vocab_b, tokens, n);
-            cooccur_update(&al->model_b->cooccur, tokens, n);
-            check_symbol_survival(al->model_b, al->vocab_b);
-            try_emerge_symbol(al->model_b, al->vocab_b);
+            /* Every cave in the colony hears the sentence — passive, 0.3×, V-only. */
+            for (int ci = 0; ci < g_colony_n; ci++) {
+                Cave* cv = g_colony[ci];
+                if (!cv) continue;
+                hebbian_update(cv->model, NULL, cv->vocab->vocab_size + 2, tokens, n, 1);
+                count_emerged_usage(cv->model, cv->vocab, tokens, n);
+                cooccur_update(&cv->model->cooccur, tokens, n);
+                check_symbol_survival(cv->model, cv->vocab);
+                try_emerge_symbol(cv->model, cv->vocab);
+            }
 
             al->lines_learned++;
             pthread_mutex_unlock(&al->lock);
@@ -676,57 +738,73 @@ static void learn_from_text(AsyncLearner* al, const char* text, int text_len) {
     free(buf);
 }
 
+/*
+ * One sweep through a directory — learn from any fresh .txt (except engines'
+ * _holding.txt buffers), rename to .learned. If `expire` is true, delete any
+ * .txt (or .learned) older than DNA_MAX_AGE so the DNA pool forgets.
+ */
+static void learner_scan_dir(AsyncLearner* al, const char* dir_path,
+                             const char* tag, int expire) {
+    DIR* dir = opendir(dir_path);
+    if (!dir) return;
+    time_t now = time(NULL);
+
+    struct dirent* ent;
+    while ((ent = readdir(dir)) != NULL) {
+        if (!al->running) break;
+        int nlen = (int)strlen(ent->d_name);
+        if (ent->d_name[0] == '.') continue;
+
+        char path[1024];
+        snprintf(path, sizeof(path), "%s/%s", dir_path, ent->d_name);
+
+        /* TTL expiration: drop anything older than DNA_MAX_AGE in this dir */
+        if (expire) {
+            struct stat st;
+            if (stat(path, &st) == 0 && now - st.st_mtime > DNA_MAX_AGE) {
+                remove(path);
+                continue;
+            }
+        }
+
+        /* Only consume fresh .txt, never our own holding buffers or already-learned */
+        if (nlen < 5 || strcmp(ent->d_name + nlen - 4, ".txt") != 0) continue;
+        if (nlen >= 12 && strcmp(ent->d_name + nlen - 12, "_holding.txt") == 0) continue;
+
+        char done_path[1024];
+        snprintf(done_path, sizeof(done_path), "%s.learned", path);
+        struct stat st;
+        if (stat(done_path, &st) == 0) continue;
+
+        FILE* f = fopen(path, "r");
+        if (!f) continue;
+        fseek(f, 0, SEEK_END);
+        long fsize = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        if (fsize <= 0 || fsize > 2 * 1024 * 1024) { fclose(f); continue; }
+        char* content = (char*)malloc(fsize + 1);
+        if (!content) { fclose(f); continue; }
+        fread(content, 1, fsize, f);
+        content[fsize] = '\0';
+        fclose(f);
+
+        printf("\n  [%s] consuming %s (%ld bytes)...\n", tag, ent->d_name, fsize);
+        learn_from_text(al, content, (int)fsize);
+        free(content);
+
+        rename(path, done_path);
+        al->files_consumed++;
+        printf("  [%s] %s → %d lines (total files: %d)\n",
+               tag, ent->d_name, al->lines_learned, al->files_consumed);
+    }
+    closedir(dir);
+}
+
 static void* learner_thread(void* arg) {
     AsyncLearner* al = (AsyncLearner*)arg;
-
     while (al->running) {
-        DIR* dir = opendir(al->feed_dir);
-        if (!dir) { sleep(5); continue; }
-
-        struct dirent* ent;
-        while ((ent = readdir(dir)) != NULL) {
-            if (!al->running) break;
-
-            /* Only .txt files, but never the engines' own holding buffers */
-            int nlen = (int)strlen(ent->d_name);
-            if (nlen < 5 || strcmp(ent->d_name + nlen - 4, ".txt") != 0) continue;
-            if (nlen >= 12 && strcmp(ent->d_name + nlen - 12, "_holding.txt") == 0) continue;
-
-            /* Build path */
-            char path[1024];
-            snprintf(path, sizeof(path), "%s/%s", al->feed_dir, ent->d_name);
-
-            /* Check if already consumed (rename to .learned) */
-            char done_path[1024];
-            snprintf(done_path, sizeof(done_path), "%s/%s.learned", al->feed_dir, ent->d_name);
-            struct stat st;
-            if (stat(done_path, &st) == 0) continue; /* already processed */
-
-            /* Read file */
-            FILE* f = fopen(path, "r");
-            if (!f) continue;
-            fseek(f, 0, SEEK_END);
-            long fsize = ftell(f);
-            fseek(f, 0, SEEK_SET);
-            if (fsize > 2 * 1024 * 1024) { fclose(f); continue; } /* max 2MB per file */
-            char* content = (char*)malloc(fsize + 1);
-            fread(content, 1, fsize, f);
-            content[fsize] = '\0';
-            fclose(f);
-
-            printf("\n  [learner] consuming %s (%ld bytes)...\n", ent->d_name, fsize);
-            learn_from_text(al, content, (int)fsize);
-            free(content);
-
-            /* Mark as consumed */
-            rename(path, done_path);
-            al->files_consumed++;
-            printf("  [learner] %s → %d lines learned (total: %d)\n",
-                   ent->d_name, al->lines_learned, al->files_consumed);
-        }
-        closedir(dir);
-
-        /* Sleep 10 seconds before next scan */
+        learner_scan_dir(al, al->feed_dir, "learner", 0);           /* external drops */
+        learner_scan_dir(al, al->dna_dir,  "dna",     1);           /* colony's own, with TTL */
         for (int i = 0; i < 10 && al->running; i++) sleep(1);
     }
     return NULL;
@@ -735,23 +813,20 @@ static void* learner_thread(void* arg) {
 static AsyncLearner g_learner;
 static pthread_t    g_learner_tid;
 
-static void start_learner(CaveModel* A, CaveVocab* vA,
-                          CaveModel* B, CaveVocab* vB,
-                          const char* feed_dir) {
+static void start_learner(const char* feed_dir, const char* dna_dir) {
     mkdir(feed_dir, 0755);
+    mkdir(dna_dir,  0755);
 
-    g_learner.model_a = A;
-    g_learner.vocab_a = vA;
-    g_learner.model_b = B;
-    g_learner.vocab_b = vB;
     g_learner.feed_dir = feed_dir;
+    g_learner.dna_dir  = dna_dir;
     g_learner.running = 1;
     g_learner.files_consumed = 0;
     g_learner.lines_learned = 0;
     pthread_mutex_init(&g_learner.lock, NULL);
 
     pthread_create(&g_learner_tid, NULL, learner_thread, &g_learner);
-    printf("  [learner] watching %s/ for .txt files — both caves hear.\n", feed_dir);
+    printf("  [learner] watching %s/ (external) and %s/ (colony) — every cave hears.\n",
+           feed_dir, dna_dir);
 }
 
 static void stop_learner(void) {
@@ -759,63 +834,6 @@ static void stop_learner(void) {
     pthread_join(g_learner_tid, NULL);
     pthread_mutex_destroy(&g_learner.lock);
 }
-
-/* ── Dual Mode ───────────────────────────────────────────────────────────
- *
- * Two engines, A and B, hear each other (and an optional user) glyph by glyph
- * through a shared ring. Each engine carries a CaveField with two somatic
- * accumulators — excitement and dissonance — and a drifting coherence_floor
- * (Stanley's silence-gate). An engine only speaks when excitement trips its
- * floor, or when dissonance forces a tunneled outburst (AML-style). Otherwise
- * it stays silent — silence imprints its own pulse.
- *
- * Asymmetry: A starts extrovert (baseline floor 0.30), B introvert (0.60).
- * Maturity drift nudges the floor ±0.005 per turn based on speaking ratio,
- * clamped to baseline ± 0.30.
- */
-
-#define TUNNEL_THRESHOLD    0.40f  /* dissonance → forced speech */
-#define EXCITEMENT_DECAY    0.94f
-#define DISSONANCE_DECAY    0.90f
-#define EXCITEMENT_CAP      2.5f
-#define MATURITY_WINDOW     40
-#define MATURITY_STEP       0.005f
-#define MATURITY_CAP        0.30f
-#define SPEAK_RATIO_HIGH    0.70f
-#define SPEAK_RATIO_LOW     0.20f
-#define DUAL_TICK_US        400000 /* 0.4s per tick */
-#define DUAL_MAX_GEN        24
-
-/* Arianna-style mass threshold for async notorch microtrain (CPT) —
- * when bytes + resonance + novelty all trip, the field forks a
- * `train_cavellman --start-from <current>` child and swaps weights
- * in-place when it finishes. */
-#define MICRO_MIN_BYTES     2500   /* accumulated feed bytes */
-#define MICRO_MIN_NOVELTY   8.0f   /* cumulative unknown-pair signal */
-#define MICRO_MIN_RESONANCE 15.0f  /* cumulative excitement integral */
-#define MICRO_TRAIN_STEPS   "300"  /* short CPT burst */
-
-typedef struct {
-    float excitement;
-    float coherence_floor;
-    float baseline_floor;
-    float dissonance;
-    int   spoke_count;
-    int   total_count;
-    const char* name;
-
-    /* Mass threshold CPT (Arianna-style) */
-    long  mass_bytes;
-    float mass_novelty;
-    float mass_resonance;
-    char  holding_path[512];    /* feed/<name>_holding.txt */
-    char  weights_path[512];    /* current on-disk .bin for --start-from */
-    char  next_weights_path[512]; /* where child will save */
-    const char* preset_name;    /* pass to child */
-    int   microtrain_active;
-    pid_t microtrain_pid;
-    int   microtrain_done_count;
-} CaveField;
 
 static void field_init(CaveField* f, const char* name, float baseline,
                        const char* weights_path, const char* preset_name) {
@@ -844,6 +862,90 @@ static void field_init(CaveField* f, const char* name, float baseline,
     /* fresh holding file */
     FILE* hf = fopen(f->holding_path, "w");
     if (hf) fclose(hf);
+}
+
+/*
+ * cave_new / cave_free / colony_add / colony_remove — dynamic allocation
+ * of caves so the ring can grow through mitosis and shrink under pressure.
+ * The two founders (A and B) go through cave_new just like any child.
+ */
+static Cave* cave_new(const char* name, float baseline,
+                      const char* weights_path, const char* preset_name) {
+    Cave* c = (Cave*)malloc(sizeof(Cave));
+    if (!c) return NULL;
+    memset(c, 0, sizeof(Cave));
+
+    /* Vocab */
+    char vpath[512];
+    snprintf(vpath, sizeof(vpath), "%s.vocab", weights_path);
+    c->vocab = (CaveVocab*)malloc(sizeof(CaveVocab));
+    if (!c->vocab) { free(c); return NULL; }
+    memset(c->vocab, 0, sizeof(CaveVocab));
+    if (load_vocab(vpath, c->vocab) != 0) {
+        free(c->vocab); free(c); return NULL;
+    }
+    c->owns_vocab = 1;
+
+    /* Model */
+    c->model = model_load(weights_path, c->vocab->vocab_size);
+    if (!c->model) {
+        free(c->vocab); free(c); return NULL;
+    }
+    cooccur_init(&c->model->cooccur);
+
+    /* Field */
+    field_init(&c->field, name, baseline, weights_path, preset_name);
+    return c;
+}
+
+static void cave_free(Cave* c) {
+    if (!c) return;
+    if (c->model) {
+        free(c->model->layers);
+        free(c->model);
+    }
+    if (c->owns_vocab && c->vocab) free(c->vocab);
+    free(c);
+}
+
+static int colony_add(Cave* c) {
+    if (!c || g_colony_n >= COLONY_MAX) return -1;
+    g_colony[g_colony_n++] = c;
+    return g_colony_n - 1;
+}
+
+/* Unused today; pressure_death will call this when colony overflows. */
+static void colony_remove(int idx) __attribute__((unused));
+static void colony_remove(int idx) {
+    if (idx < 0 || idx >= g_colony_n) return;
+    cave_free(g_colony[idx]);
+    for (int i = idx; i < g_colony_n - 1; i++)
+        g_colony[i] = g_colony[i + 1];
+    g_colony[g_colony_n - 1] = NULL;
+    g_colony_n--;
+}
+
+/*
+ * dna_write_cave — cave deposits its latest utterance into the colony's
+ * shared DNA pool so other caves (including its own future children) can
+ * absorb it through the learner. The pool is not a corpus — old files
+ * expire after DNA_MAX_AGE. What the colony keeps is whatever others
+ * picked up before it decayed.
+ */
+static void dna_write_cave(const Cave* c, const int* tokens, int len) {
+    if (len <= 0 || !c) return;
+    char fname[512];
+    snprintf(fname, sizeof(fname), "%s/%s_%ld_%d.txt",
+             DNA_DIR, c->field.name, (long)time(NULL), rand());
+    FILE* f = fopen(fname, "w");
+    if (!f) return;
+    for (int i = 0; i < len; i++) {
+        int t = tokens[i];
+        if (t < 0 || t >= c->vocab->vocab_size) continue;
+        fprintf(f, "%s ", c->vocab->tokens[t]);
+    }
+    fprintf(f, ".\n");
+    fclose(f);
 }
 
 /*
@@ -1124,17 +1226,16 @@ static int try_read_user_line(char* buf, int cap) {
 }
 
 /*
- * Dual loop: two models breathe on each other. User can interject at any
- * moment — their glyphs broadcast into both fields and the engine whose
- * field trips first responds.
+ * Colony loop: N caves breathe on each other. Any cave that trips its
+ * silence gate speaks; every other cave hears. User can drop glyphs into
+ * the ring at any moment — they broadcast to every active cave. Each
+ * utterance (by any cave) occasionally lands a copy in the shared dna/
+ * pool so future scans of the learner can feed the ecology back into
+ * every model's passive-reading path. Mitosis and pressure-death hook in
+ * later — this tick loop is N-symmetric already.
  */
-static void dual_main(CaveModel* A, CaveModel* B, CaveVocab* vA, CaveVocab* vB,
-                      float temp, float top_p,
-                      const char* wa_path, const char* wb_path,
-                      const char* preset_name) {
-    CaveField fA, fB;
-    field_init(&fA, "A", 0.30f, wa_path, preset_name);  /* extrovert */
-    field_init(&fB, "B", 0.60f, wb_path, preset_name);  /* introvert */
+static void colony_main(float temp, float top_p, const char* preset_name) {
+    (void)preset_name;  /* each cave already carries its own preset */
 
     /* Non-blocking stdin — user glyphs any time. */
     int flags = fcntl(fileno(stdin), F_GETFL, 0);
@@ -1143,32 +1244,36 @@ static void dual_main(CaveModel* A, CaveModel* B, CaveVocab* vA, CaveVocab* vB,
     int last_tokens[MAX_SEQ];
     int last_len = 0;
 
-    /* Bootstrap: seed both fields with a neutral pulse (glyph "BE") so the
-     * loop doesn't deadlock on all-zero excitement against non-zero floors. */
+    /* Bootstrap: seed every field with a neutral pulse (glyph "BE") so no
+     * cave deadlocks on all-zero excitement against a non-zero floor. */
     int be_id = semtok_find_glyph("BE");
     if (be_id >= 0) {
-        field_hear(&fA, A, -1, be_id);
-        field_hear(&fB, B, -1, be_id);
+        for (int ci = 0; ci < g_colony_n; ci++)
+            field_hear(&g_colony[ci]->field, g_colony[ci]->model, -1, be_id);
         last_tokens[0] = be_id;
         last_len = 1;
     }
 
     printf("══════════════════════════════════════════════════════════\n");
-    printf("  caveLLMan — DUAL MODE\n");
+    printf("  caveLLMan — COLONY (n=%d)\n", g_colony_n);
     printf("══════════════════════════════════════════════════════════\n");
-    printf("  A: extrovert (coherence_floor %.2f)\n", fA.baseline_floor);
-    printf("  B: introvert (coherence_floor %.2f)\n", fB.baseline_floor);
+    for (int ci = 0; ci < g_colony_n; ci++) {
+        CaveField* f = &g_colony[ci]->field;
+        printf("  %s: baseline floor %.2f\n", f->name, f->baseline_floor);
+    }
     printf("  tunnel=%.2f, decay=%.2f/%.2f, maturity drift ±%.2f\n",
            TUNNEL_THRESHOLD, EXCITEMENT_DECAY, DISSONANCE_DECAY, MATURITY_CAP);
-    printf("  type glyphs any time to join the ring. 'quit' to exit.\n");
-    start_learner(A, vA, B, vB, "feed");
+    printf("  drop glyphs into the ring any time. 'quit' to exit.\n");
+    start_learner("feed", DNA_DIR);
     printf("──────────────────────────────────────────────────────────\n\n");
 
+    int dna_counter = 0;
     int running = 1;
     while (running) {
-        /* Hold the learner's lock while we mutate field/model state —
-         * otherwise the feed/ thread races us on cooccur and emergence. */
+        /* Hold the learner's lock while we mutate model/field state —
+         * otherwise the feed/ and dna/ scans race us on cooccur/emergence. */
         pthread_mutex_lock(&g_learner.lock);
+
         /* 1. User input (non-blocking) */
         char ubuf[512];
         if (try_read_user_line(ubuf, sizeof(ubuf)) > 0) {
@@ -1177,88 +1282,86 @@ static void dual_main(CaveModel* A, CaveModel* B, CaveVocab* vA, CaveVocab* vB,
                 break;
             }
             if (strcmp(ubuf, "stats") == 0) {
-                printf("  [A] exc=%.2f floor=%.2f diss=%.2f spoke=%d/%d\n",
-                       fA.excitement, fA.coherence_floor, fA.dissonance,
-                       fA.spoke_count, fA.total_count);
-                printf("  [B] exc=%.2f floor=%.2f diss=%.2f spoke=%d/%d\n",
-                       fB.excitement, fB.coherence_floor, fB.dissonance,
-                       fB.spoke_count, fB.total_count);
+                for (int ci = 0; ci < g_colony_n; ci++) {
+                    CaveField* f = &g_colony[ci]->field;
+                    printf("  [%s] exc=%.2f floor=%.2f diss=%.2f spoke=%d/%d mass=%ldB/%.1fn/%.1fr\n",
+                           f->name, f->excitement, f->coherence_floor, f->dissonance,
+                           f->spoke_count, f->total_count,
+                           f->mass_bytes, f->mass_novelty, f->mass_resonance);
+                }
                 pthread_mutex_unlock(&g_learner.lock);
                 continue;
             }
+            /* Tokenize against the first cave's vocab (all share the 88 canonical
+             * glyphs, so the token ids are interchangeable for base symbols). */
             int utoks[MAX_SEQ];
-            int un = tokenize_prompt(ubuf, vA, utoks, MAX_SEQ);
+            int un = tokenize_prompt(ubuf, g_colony[0]->vocab, utoks, MAX_SEQ);
             if (un > 0) {
-                print_glyphs("user", vA, utoks, un);
+                print_glyphs("user", g_colony[0]->vocab, utoks, un);
                 int prev = (last_len > 0) ? last_tokens[last_len - 1] : -1;
                 for (int i = 0; i < un; i++) {
                     int p = (i == 0) ? prev : utoks[i - 1];
-                    field_hear(&fA, A, p, utoks[i]);
-                    field_hear(&fB, B, p, utoks[i]);
+                    for (int ci = 0; ci < g_colony_n; ci++)
+                        field_hear(&g_colony[ci]->field, g_colony[ci]->model, p, utoks[i]);
                 }
-                field_append_holding(&fA, vA, utoks, un);
-                field_append_holding(&fB, vB, utoks, un);
+                for (int ci = 0; ci < g_colony_n; ci++)
+                    field_append_holding(&g_colony[ci]->field, g_colony[ci]->vocab, utoks, un);
                 memcpy(last_tokens, utoks, (size_t)un * sizeof(int));
                 last_len = un;
             }
         }
 
-        /* 2. Randomized turn order, both fields tick */
-        int a_first = (rand() & 1);
-        CaveField *f1 = a_first ? &fA : &fB;
-        CaveField *f2 = a_first ? &fB : &fA;
-        CaveModel *m1 = a_first ? A   : B;
-        CaveModel *m2 = a_first ? B   : A;
-        CaveVocab *v1 = a_first ? vA  : vB;
-        CaveVocab *v2 = a_first ? vB  : vA;
+        /* 2. Randomized turn order through the whole colony (Fisher-Yates) */
+        int order[COLONY_MAX];
+        for (int i = 0; i < g_colony_n; i++) order[i] = i;
+        for (int i = g_colony_n - 1; i > 0; i--) {
+            int j = rand() % (i + 1);
+            int tmp = order[i]; order[i] = order[j]; order[j] = tmp;
+        }
 
-        for (int pass = 0; pass < 2; pass++) {
-            CaveField* f  = (pass == 0) ? f1 : f2;
-            CaveModel* mm = (pass == 0) ? m1 : m2;
-            CaveVocab* vv = (pass == 0) ? v1 : v2;
-            CaveField* other_f = (pass == 0) ? f2 : f1;
-            CaveModel* other_m = (pass == 0) ? m2 : m1;
+        for (int k = 0; k < g_colony_n; k++) {
+            Cave* c = g_colony[order[k]];
+            CaveField* f = &c->field;
 
             f->total_count++;
             if (!field_should_speak(f)) continue;
 
             int gen[MAX_SEQ];
             int prompt_len = (last_len > 0) ? last_len : 0;
-            int gn = dual_generate(mm, vv, last_tokens, prompt_len,
+            int gn = dual_generate(c->model, c->vocab, last_tokens, prompt_len,
                                    DUAL_MAX_GEN, temp, top_p,
                                    gen, MAX_SEQ);
-            if (gn <= 0) {
-                /* Cave wanted to speak but produced nothing — treat as silence */
-                continue;
-            }
+            if (gn <= 0) continue; /* wanted to speak but produced nothing */
 
-            print_glyphs(f->name, vv, gen, gn);
+            print_glyphs(f->name, c->vocab, gen, gn);
             field_after_speak(f);
 
-            /* Other engine hears everything */
+            /* Every other cave in the colony hears this utterance */
             int prev = (last_len > 0) ? last_tokens[last_len - 1] : -1;
-            for (int i = 0; i < gn; i++) {
-                int p = (i == 0) ? prev : gen[i - 1];
-                field_hear(other_f, other_m, p, gen[i]);
+            for (int ci = 0; ci < g_colony_n; ci++) {
+                if (ci == order[k]) continue; /* speaker doesn't re-hear itself */
+                Cave* other = g_colony[ci];
+                for (int i = 0; i < gn; i++) {
+                    int p = (i == 0) ? prev : gen[i - 1];
+                    field_hear(&other->field, other->model, p, gen[i]);
+                }
+                field_append_holding(&other->field, c->vocab, gen, gn);
             }
-            /* Listener remembers what it heard for eventual CPT */
-            field_append_holding(other_f, vv, gen, gn);
+
+            /* Every ~5th utterance deposits in the shared dna/ pool so
+             * the colony can feed on its own speech via the learner. */
+            if ((++dna_counter % 5) == 0) dna_write_cave(c, gen, gn);
 
             memcpy(last_tokens, gen, (size_t)gn * sizeof(int));
             last_len = gn;
         }
 
-        /* 3. Both fields decay one tick */
-        field_decay(&fA);
-        field_decay(&fB);
-
-        /* 4. Maturity drift — auto-calibrate silence threshold */
-        field_maturity_drift(&fA);
-        field_maturity_drift(&fB);
-
-        /* 5. Mass-threshold CPT — fork child if tripped, reap if running */
-        field_microtrain_tick(&fA, A);
-        field_microtrain_tick(&fB, B);
+        /* 3/4/5. Decay, maturity drift, microtrain — for every cave */
+        for (int ci = 0; ci < g_colony_n; ci++) {
+            field_decay(&g_colony[ci]->field);
+            field_maturity_drift(&g_colony[ci]->field);
+            field_microtrain_tick(&g_colony[ci]->field, g_colony[ci]->model);
+        }
 
         pthread_mutex_unlock(&g_learner.lock);
 
@@ -1268,16 +1371,20 @@ static void dual_main(CaveModel* A, CaveModel* B, CaveVocab* vA, CaveVocab* vB,
 
     stop_learner();
 
-    /* If a microtrain child is still running when we quit, wait for it
-     * politely so we don't leave a zombie. */
-    if (fA.microtrain_active) waitpid(fA.microtrain_pid, NULL, 0);
-    if (fB.microtrain_active) waitpid(fB.microtrain_pid, NULL, 0);
+    /* Reap any microtrain children still running at exit */
+    for (int ci = 0; ci < g_colony_n; ci++) {
+        CaveField* f = &g_colony[ci]->field;
+        if (f->microtrain_active) waitpid(f->microtrain_pid, NULL, 0);
+    }
 
-    printf("\n  [A] spoke %d / %d turns, final floor %.3f, microtrains=%d\n",
-           fA.spoke_count, fA.total_count, fA.coherence_floor, fA.microtrain_done_count);
-    printf("  [B] spoke %d / %d turns, final floor %.3f, microtrains=%d\n",
-           fB.spoke_count, fB.total_count, fB.coherence_floor, fB.microtrain_done_count);
-    printf("the cave-pair remembers.\n");
+    printf("\n");
+    for (int ci = 0; ci < g_colony_n; ci++) {
+        CaveField* f = &g_colony[ci]->field;
+        printf("  [%s] spoke %d / %d turns, final floor %.3f, microtrains=%d\n",
+               f->name, f->spoke_count, f->total_count,
+               f->coherence_floor, f->microtrain_done_count);
+    }
+    printf("the colony remembers.\n");
 }
 
 /* ── Main ───────────────────────────────────────────────────────────────── */
@@ -1330,30 +1437,18 @@ int main(int argc, char** argv) {
     E = pr->embd; H = pr->heads; HD = E / H; FFN_D = 4 * E; N_L = pr->layers; CTX = pr->ctx;
     srand(seed);
 
-    /* ── Load both caves and run the field loop ────────────────────────── */
-    char vpa[512], vpb[512];
-    snprintf(vpa, sizeof(vpa), "%s.vocab", weights_a);
-    snprintf(vpb, sizeof(vpb), "%s.vocab", weights_b);
-
-    static CaveVocab vocab_a, vocab_b;
-    memset(&vocab_a, 0, sizeof(vocab_a));
-    memset(&vocab_b, 0, sizeof(vocab_b));
-    if (load_vocab(vpa, &vocab_a) != 0) return 1;
-    if (load_vocab(vpb, &vocab_b) != 0) return 1;
-
+    /* ── Seed the colony with the two founders, then run the ring ──────── */
     nt_seed(seed);
-    CaveModel* A = model_load(weights_a, vocab_a.vocab_size);
-    if (!A) return 1;
-    CaveModel* B = model_load(weights_b, vocab_b.vocab_size);
-    if (!B) { free(A); return 1; }
+    Cave* A = cave_new("A", 0.30f, weights_a, preset_name);   /* extrovert */
+    if (!A) { printf("Failed to load founder A from %s\n", weights_a); return 1; }
+    Cave* B = cave_new("B", 0.60f, weights_b, preset_name);   /* introvert */
+    if (!B) { printf("Failed to load founder B from %s\n", weights_b); cave_free(A); return 1; }
+    colony_add(A);
+    colony_add(B);
 
-    cooccur_init(&A->cooccur);
-    cooccur_init(&B->cooccur);
+    colony_main(temp, top_p, preset_name);
 
-    dual_main(A, B, &vocab_a, &vocab_b, temp, top_p,
-              weights_a, weights_b, preset_name);
-
-    free(A->layers); free(A);
-    free(B->layers); free(B);
+    for (int ci = 0; ci < g_colony_n; ci++) cave_free(g_colony[ci]);
+    g_colony_n = 0;
     return 0;
 }

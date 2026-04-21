@@ -22,3 +22,4 @@ data/corpus_big.txt
 weights/cavellman_*_micro.bin
 weights/cavellman_*_micro.bin.json
 weights/cavellman_*_micro.bin.vocab
+dna/
