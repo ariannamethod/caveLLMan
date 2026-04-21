@@ -22,4 +22,10 @@ data/corpus_big.txt
 weights/cavellman_*_micro.bin
 weights/cavellman_*_micro.bin.json
 weights/cavellman_*_micro.bin.vocab
+
+# runtime mitosis children (born during a live session, not shipped)
+weights/cavellman_child_*.bin
+weights/cavellman_child_*.bin.json
+weights/cavellman_child_*.bin.vocab
+
 dna/

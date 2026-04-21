@@ -925,6 +925,181 @@ static void colony_remove(int idx) {
     g_colony_n--;
 }
 
+/* ── Sexual mitosis ──────────────────────────────────────────────────────
+ *
+ * Two cave parents produce one cave child with blended weights. The
+ * blend is layer-wise contiguous to avoid competing-conventions
+ * destructiveness (ref: arxiv 2003.10306 — naive intra-layer neuron
+ * crossover between independently trained transformers produces dead
+ * offspring because head/channel permutations are misaligned). So:
+ *
+ *   - token + position embeddings:  0.5·A + 0.5·B   (averaged)
+ *   - final RMS and LM head:         0.5·A + 0.5·B  (averaged)
+ *   - every other whole layer block alternates wholesale from A or B
+ *     (layer 0→A, layer 1→B, layer 2→A, ...) — contiguous, no intra-
+ *     layer mixup. The child inherits its father's even-numbered ribs
+ *     and its mother's odd-numbered ribs, so to speak.
+ *
+ * Child size equals parent A's preset for now; true downsize comes in
+ * pass 3c. Child's vocab + json metadata are copied verbatim from A
+ * (all caves share the 88 canonical glyphs).
+ */
+
+#define MITOSIS_COOLDOWN_TICKS   500
+#define MITOSIS_MIN_CPT_DONE     1     /* each parent must have survived ≥1 microtrain */
+#define MITOSIS_MIN_TOTAL_TURNS  120   /* and taken ≥120 turns in the ring */
+
+static int g_mitosis_cooldown = 0;
+static int g_children_born    = 0;
+
+/* Fitness score — higher = more likely to be picked as a parent. */
+static float cave_fitness(const Cave* c) {
+    const CaveField* f = &c->field;
+    if (f->total_count <= 0) return 0.0f;
+    float speak_ratio = (float)f->spoke_count / (float)f->total_count;
+    return f->total_count * 0.01f
+         + f->microtrain_done_count * 10.0f
+         + f->mass_resonance * 0.5f
+         + speak_ratio * 5.0f;
+}
+
+/* Load both parent .bin files, blend them layer-wise, write the child
+ * tensor set to path_out. Returns 0 on success, -1 on failure. */
+static int blend_weights(const char* path_a, const char* path_b, const char* path_out) {
+    int n_a = 0, n_b = 0;
+    nt_tensor** ta = nt_load(path_a, &n_a);
+    nt_tensor** tb = nt_load(path_b, &n_b);
+    if (!ta || !tb || n_a != n_b || n_a < 4) {
+        if (ta) { for (int i = 0; i < n_a; i++) nt_tensor_free(ta[i]); free(ta); }
+        if (tb) { for (int i = 0; i < n_b; i++) nt_tensor_free(tb[i]); free(tb); }
+        return -1;
+    }
+
+    /* Layout produced by model_load: wte, wpe, [rms1 wq wk wv wo rms2 fc1 fc2]×N_L, rms_f, head. */
+    const int n_layers  = (n_a - 4) / 8;
+    const int emb_off   = 2;
+    const int per_layer = 8;
+    const int post_off  = emb_off + n_layers * per_layer;
+
+    /* Embeddings: simple average */
+    for (int e = 0; e < emb_off; e++) {
+        if (ta[e]->len != tb[e]->len) continue;
+        for (long i = 0; i < ta[e]->len; i++)
+            ta[e]->data[i] = 0.5f * (ta[e]->data[i] + tb[e]->data[i]);
+    }
+
+    /* Layers: whole-block alternation (odd layers overwritten from B) */
+    for (int l = 0; l < n_layers; l++) {
+        if (l % 2 == 0) continue;              /* even layers stay from A */
+        for (int k = 0; k < per_layer; k++) {
+            int idx = emb_off + l * per_layer + k;
+            if (ta[idx]->len != tb[idx]->len) continue;
+            memcpy(ta[idx]->data, tb[idx]->data,
+                   (size_t)ta[idx]->len * sizeof(float));
+        }
+    }
+
+    /* Final RMS + LM head: average */
+    for (int e = post_off; e < n_a; e++) {
+        if (ta[e]->len != tb[e]->len) continue;
+        for (long i = 0; i < ta[e]->len; i++)
+            ta[e]->data[i] = 0.5f * (ta[e]->data[i] + tb[e]->data[i]);
+    }
+
+    int ok = nt_save(path_out, ta, n_a);
+
+    for (int i = 0; i < n_a; i++) nt_tensor_free(ta[i]);
+    for (int i = 0; i < n_b; i++) nt_tensor_free(tb[i]);
+    free(ta); free(tb);
+    return ok;
+}
+
+/* Copy a binary file byte-for-byte (for child's .vocab and .bin.json). */
+static int copy_file(const char* src, const char* dst) {
+    FILE* fi = fopen(src, "rb");
+    if (!fi) return -1;
+    FILE* fo = fopen(dst, "wb");
+    if (!fo) { fclose(fi); return -1; }
+    char buf[4096];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), fi)) > 0) fwrite(buf, 1, n, fo);
+    fclose(fi); fclose(fo);
+    return 0;
+}
+
+/* Produce one child cave from two parents and graft it into the ring. */
+static Cave* colony_mitosis(const Cave* pa, const Cave* pb, const char* preset_name) {
+    if (!pa || !pb || g_colony_n >= COLONY_MAX) return NULL;
+
+    char child_name[8];
+    snprintf(child_name, sizeof(child_name), "%c", 'A' + g_colony_n);  /* C, D, E, ... */
+
+    char child_w[512], child_v[512], child_j[512];
+    char parent_v[512], parent_j[512];
+    snprintf(child_w, sizeof(child_w), "weights/cavellman_child_%s.bin", child_name);
+    snprintf(child_v, sizeof(child_v), "%s.vocab", child_w);
+    snprintf(child_j, sizeof(child_j), "%s.json",  child_w);
+    snprintf(parent_v, sizeof(parent_v), "%s.vocab", pa->field.weights_path);
+    snprintf(parent_j, sizeof(parent_j), "%s.json",  pa->field.weights_path);
+
+    if (blend_weights(pa->field.weights_path, pb->field.weights_path, child_w) != 0) {
+        printf("  [mitosis] blend_weights failed for %s × %s → %s\n",
+               pa->field.name, pb->field.name, child_w);
+        return NULL;
+    }
+    copy_file(parent_v, child_v);
+    copy_file(parent_j, child_j);
+
+    /* Child's silence floor is the average of its parents' baselines —
+     * a middle temperament between extrovert and introvert. */
+    float child_baseline = 0.5f * (pa->field.baseline_floor + pb->field.baseline_floor);
+
+    /* Child_name buffer is stack; cave_free never touches name, but field_init
+     * strncpy's it into a permanent slot only via pointer — so strdup. */
+    char* permanent_name = strdup(child_name);
+
+    Cave* child = cave_new(permanent_name, child_baseline, child_w, preset_name);
+    if (!child) {
+        free(permanent_name);
+        printf("  [mitosis] cave_new failed for child %s\n", child_name);
+        return NULL;
+    }
+    colony_add(child);
+    g_children_born++;
+
+    printf("\n  *** MITOSIS: %s × %s → %s (fitness %.2f × %.2f, floor %.2f) ***\n\n",
+           pa->field.name, pb->field.name, child_name,
+           cave_fitness(pa), cave_fitness(pb), child_baseline);
+    return child;
+}
+
+/* Once-per-tick check. If conditions are met, pick the two fittest
+ * caves and spawn a child. Resets the cooldown. */
+static void colony_try_mitosis(const char* preset_name) {
+    if (g_mitosis_cooldown > 0) { g_mitosis_cooldown--; return; }
+    if (g_colony_n < 2 || g_colony_n >= COLONY_MAX) return;
+
+    /* Score every cave; pick top two. */
+    int   best_i = -1, second_i = -1;
+    float best_s = -1.0f, second_s = -1.0f;
+    for (int i = 0; i < g_colony_n; i++) {
+        const CaveField* f = &g_colony[i]->field;
+        if (f->total_count < MITOSIS_MIN_TOTAL_TURNS) continue;
+        if (f->microtrain_done_count < MITOSIS_MIN_CPT_DONE) continue;
+        float s = cave_fitness(g_colony[i]);
+        if (s > best_s) {
+            second_i = best_i; second_s = best_s;
+            best_i = i;        best_s = s;
+        } else if (s > second_s) {
+            second_i = i; second_s = s;
+        }
+    }
+    if (best_i < 0 || second_i < 0) return;
+
+    if (colony_mitosis(g_colony[best_i], g_colony[second_i], preset_name))
+        g_mitosis_cooldown = MITOSIS_COOLDOWN_TICKS;
+}
+
 /*
  * dna_write_cave — cave deposits its latest utterance into the colony's
  * shared DNA pool so other caves (including its own future children) can
@@ -1235,7 +1410,8 @@ static int try_read_user_line(char* buf, int cap) {
  * later — this tick loop is N-symmetric already.
  */
 static void colony_main(float temp, float top_p, const char* preset_name) {
-    (void)preset_name;  /* each cave already carries its own preset */
+    /* preset_name is needed by colony_try_mitosis so children share the
+     * founders' architecture (same-size mitosis for now; downsize later). */
 
     /* Non-blocking stdin — user glyphs any time. */
     int flags = fcntl(fileno(stdin), F_GETFL, 0);
@@ -1362,6 +1538,9 @@ static void colony_main(float temp, float top_p, const char* preset_name) {
             field_maturity_drift(&g_colony[ci]->field);
             field_microtrain_tick(&g_colony[ci]->field, g_colony[ci]->model);
         }
+
+        /* 5b. Sexual mitosis — two fittest caves may spawn a child. */
+        colony_try_mitosis(preset_name);
 
         pthread_mutex_unlock(&g_learner.lock);
 

@@ -20,7 +20,9 @@ Two training modes:
 - **Diffusion** — randomly masks positions, trains bidirectional prediction
 - **Autoregressive** — standard left-to-right next-token prediction
 
-At runtime there is only one mode: **two caves talk**. A single-engine dialogue loop with a human at the center was deprecated — the human is no longer required to be present, let alone central. No Python. No pip. No torch. C engine built on [notorch](https://github.com/ariannamethod/notorch).
+At runtime there is only one mode: **a colony of caves talks.** A single-engine dialogue loop with a human at the center was deprecated — the human is no longer required to be present, let alone central. No Python. No pip. No torch. C engine built on [notorch](https://github.com/ariannamethod/notorch).
+
+> **Note on prior art.** An independent survey (GENOME, EvoMerge, Sakana Evolutionary Model Merge, AutoMerger, Sugarscape LLM agents, Cultural Evolution in LLM Populations) found no system combining all five of: (a) two-parent weight inheritance into a *smaller* child LM, (b) colony where parents and children coexist and converse, (c) shared text DNA pool everyone writes and trains from, (d) cap/pressure death, (e) runtime self-reproduction. Every close hit breaks on at least two axes. Structurally caveLLMan is in the lineage of Tom Ray's Tierra (1991) — colony-based self-replicators with shared memory substrate and death — but lifted from bytecode programs to language-model weights. *To our reading, the combination as specified here is new.*
 
 ---
 
