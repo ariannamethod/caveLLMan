@@ -1,15 +1,15 @@
 # caveLLMan — Makefile
 # Self-evolving hieroglyphic language model (pure C + notorch).
+# Dual-only: two caves in a ring. Human is optional, not central.
 #
 # Targets:
-#   make                       Build cavellman engine (default)
-#   make cavellman             Build interactive engine with BLAS + pthreads
-#   make cavellman-cpu         Build engine without BLAS (portable)
+#   make                       Build cavellman ring engine (default)
+#   make cavellman             Build ring engine with BLAS + pthreads
+#   make cavellman-cpu         Build ring engine without BLAS (portable)
 #   make train_cavellman       Build training binary
 #   make train_diffusion       Build diffusion training binary
 #   make train                 Build all training binaries
 #   make weights               Train fresh weights/cavellman_v3.bin if missing
-#   make test                  Run semantic tokenizer tests (node)
 #   make clean                 Remove build artifacts
 #   make help                  Show this help
 
@@ -29,19 +29,19 @@ ifeq ($(UNAME), Linux)
   BLAS_NAME = OpenBLAS
 endif
 
-.PHONY: all cavellman cavellman-cpu train train_cavellman train_diffusion weights test clean help
+.PHONY: all cavellman cavellman-cpu train train_cavellman train_diffusion weights clean help
 
 all: cavellman
 
-# ── Interactive engine ──────────────────────────────────────────────────
+# ── Ring engine (dual-only) ─────────────────────────────────────────────
 
 cavellman: cavellman.c ariannamethod/notorch.c ariannamethod/notorch.h
 	$(CC) $(CFLAGS) $(BLAS_FLAGS) -Iariannamethod -o cavellman cavellman.c ariannamethod/notorch.c -lm -lpthread
-	@echo "Compiled: cavellman (Hebbian + async learner + $(BLAS_NAME))"
+	@echo "Compiled: cavellman (dual ring + Hebbian + async learner + $(BLAS_NAME))"
 
 cavellman-cpu: cavellman.c ariannamethod/notorch.c ariannamethod/notorch.h
 	$(CC) $(CFLAGS) -Iariannamethod -o cavellman cavellman.c ariannamethod/notorch.c -lm -lpthread
-	@echo "Compiled: cavellman (Hebbian + async learner, no BLAS)"
+	@echo "Compiled: cavellman (dual ring + Hebbian + async learner, no BLAS)"
 
 # ── Training binaries ───────────────────────────────────────────────────
 
@@ -65,12 +65,6 @@ weights/cavellman_v3.bin: train_cavellman data/cavellman_train_final.txt
 	./train_cavellman --dataset data/cavellman_train_final.txt --preset small --save weights/cavellman_v3.bin
 	@echo "Trained: weights/cavellman_v3.bin — run ./cavellman --weights weights/cavellman_v3.bin --preset small"
 
-# ── Tests ───────────────────────────────────────────────────────────────
-
-test:
-	@echo "── semantic tokenizer tests ──"
-	@node tests/test_semantic_tokenizer.js
-
 # ── Cleanup ─────────────────────────────────────────────────────────────
 
 clean:
@@ -78,13 +72,13 @@ clean:
 
 help:
 	@echo "caveLLMan — self-evolving hieroglyphic LM (pure C, notorch)"
+	@echo "Dual-only: two caves in a ring. Human is optional, not central."
 	@echo ""
-	@echo "  make                  Build cavellman engine (default)"
-	@echo "  make cavellman        Build engine with BLAS + pthreads"
-	@echo "  make cavellman-cpu    Build engine without BLAS"
+	@echo "  make                  Build cavellman ring engine (default)"
+	@echo "  make cavellman        Build ring engine with BLAS + pthreads"
+	@echo "  make cavellman-cpu    Build ring engine without BLAS"
 	@echo "  make train            Build training binaries"
 	@echo "  make weights          Train weights/cavellman_v3.bin (if missing)"
-	@echo "  make test             Run semantic tokenizer tests (node)"
 	@echo "  make clean            Remove build artifacts"
 	@echo ""
 	@echo "Train:"
@@ -92,6 +86,7 @@ help:
 	@echo "  ./train_diffusion  --dataset data/cavellman_train_final.txt --steps 15000"
 	@echo ""
 	@echo "Run:"
-	@echo "  ./cavellman --weights weights/cavellman_v3.bin --preset small"
+	@echo "  ./cavellman                                      # A=Dracula, B=Frankenstein"
+	@echo "  ./cavellman --preset medium --weights weights/cavellman_medium.bin"
 	@echo ""
 	@echo "Presets: tiny(18/3/2) micro(48/4/3) standard(64/8/3) small(96/8/4) medium(128/8/4)"

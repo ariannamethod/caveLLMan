@@ -16,11 +16,11 @@ caveLLMan is a transformer that compresses English text into 88 hieroglyphic con
 "she wrote code all night and found the bug"  →  woman AI dark and make light
 ```
 
-Two inference modes:
-- **Diffusion** — the cave painting appears all at once (MASK → iterative unmasking)
-- **Autoregressive** — glyphs emerge left to right, token by token
+Two training modes:
+- **Diffusion** — randomly masks positions, trains bidirectional prediction
+- **Autoregressive** — standard left-to-right next-token prediction
 
-No Python. No pip. No torch. C engine built on [notorch](https://github.com/ariannamethod/notorch). Browser engine runs entirely in your browser.
+At runtime there is only one mode: **two caves talk**. A single-engine dialogue loop with a human at the center was deprecated — the human is no longer required to be present, let alone central. No Python. No pip. No torch. C engine built on [notorch](https://github.com/ariannamethod/notorch).
 
 ---
 
@@ -200,17 +200,17 @@ cp data/dracula.txt feed/
 
 One circle. **BE** turns any noun into a verb: `BE fear` = to be afraid. `BE love` = to love. `BE fire` = to burn. One symbol that doubles the expressiveness of the entire language.
 
-### 7. Dual Mode — two caves talking
+### 7. The Ring — two caves talking
 
-`--dual` runs two engines, **A** (extrovert, coherence_floor 0.30) and **B** (introvert, 0.60), on top of a single `CaveField` apiece: an **excitement** accumulator (surprise × novelty), a **dissonance** meter (for unexpected pairs), and a drifting silence threshold à la [Stanley](https://github.com/ariannamethod/stanley)'s silence-gate. An engine speaks only when its excitement trips the floor — or when dissonance > 0.40 forces a tunneled outburst, AML-style. Otherwise it stays silent, and the silence itself is data. **Maturity drift** (±0.005 per turn, clamped ±0.30) auto-calibrates the floor: if an engine hogs the ring (> 70% speaking), its gate tightens; if it barely speaks (< 20%), it loosens.
+`./cavellman` runs two engines, **A** (extrovert, coherence_floor 0.30) and **B** (introvert, 0.60), on top of a single `CaveField` apiece: an **excitement** accumulator (surprise × novelty), a **dissonance** meter (for unexpected pairs), and a drifting silence threshold à la [Stanley](https://github.com/ariannamethod/stanley)'s silence-gate. An engine speaks only when its excitement trips the floor — or when dissonance > 0.40 forces a tunneled outburst, AML-style. Otherwise it stays silent, and the silence itself is data. **Maturity drift** (±0.005 per turn, clamped ±0.30) auto-calibrates the floor: if an engine hogs the ring (> 70% speaking), its gate tightens; if it barely speaks (< 20%), it loosens.
 
-You can join the ring any time — glyphs you type broadcast to both fields, and whoever trips first answers. Sometimes neither answers. That's allowed.
+The ring does not need you. Engines talk to each other; the feed/ folder feeds them; you can drop into the ring by typing glyphs, but you are one more source among equals — not the center. Sometimes neither engine answers. Sometimes both do. That's the field, not a chatbot.
 
-Shipped weights include two distinct voices — `cavellman_A.bin` trained on Dracula only (15K steps, seed 42, first-person `me`-dominated) and `cavellman_B.bin` trained on Frankenstein only (15K steps, seed 123, formal epistolary). Run the ring with both:
+Shipped weights include two distinct voices — `cavellman_A.bin` trained on Dracula only (15K steps, seed 42, first-person `me`-dominated) and `cavellman_B.bin` trained on Frankenstein only (15K steps, seed 123, formal epistolary). Default run uses both:
 
 ```bash
-./cavellman --dual --weights-a weights/cavellman_A.bin \
-                   --weights-b weights/cavellman_B.bin
+./cavellman                                     # A=Dracula, B=Frankenstein
+./cavellman --weights weights/cavellman_medium.bin --preset medium   # shared medium weights
 ```
 
 ```
@@ -242,7 +242,7 @@ When all three trip their thresholds (currently `2500 bytes + novelty ≥ 8 + re
 
 Current thresholds: **2500 bytes + novelty ≥ 8 + resonance ≥ 15** per engine, **300 CPT steps** per burst.
 
-From a real `--dual --preset medium --weights cavellman_medium.bin` session driven by ~20 mixed user prompts (nature / emotion / mind / BE-verbs / unexpected combos like `AI dream death music`) over ~10 minutes. After 896 ticks B tripped first:
+From a real `--preset medium --weights cavellman_medium.bin` session driven by ~20 mixed user prompts (nature / emotion / mind / BE-verbs / unexpected combos like `AI dream death music`) over ~10 minutes. After 896 ticks B tripped first:
 
 ```
 [B] microtrain spawned (pid=29925, 2601 bytes / nov 425.9 / res 575.8)
@@ -269,48 +269,36 @@ Safeguards (planned, not yet in code): sha256 whitelist of approved sources, hol
 
 ## Quick Start
 
-### cavellman.c — the living engine
+### cavellman.c — the ring
 
 ```bash
 make cavellman                     # build with BLAS + pthreads
 
-./cavellman --weights weights/cavellman_v3.bin --preset small
-./cavellman --preset medium --weights weights/cavellman_medium.bin   # medium, richer corpus
-./cavellman --dual --weights weights/cavellman_v3.bin                # two caves talking
-./cavellman --dual --preset medium --weights weights/cavellman_medium.bin  # dual medium
+./cavellman                                                            # A=Dracula, B=Frankenstein (default)
+./cavellman --preset medium --weights weights/cavellman_medium.bin     # shared medium weights
+./cavellman --weights-a weights/cavellman_A.bin \
+            --weights-b weights/cavellman_B.bin                        # explicit A/B
 ```
 
 ```
 ══════════════════════════════════════════════════════════
-  caveLLMan — self-evolving hieroglyphic language model
+  caveLLMan — DUAL MODE
 ══════════════════════════════════════════════════════════
-  hebbian: rank=4, lr=0.0010
-  emergence: threshold=0.75, window=50
-  [learner] watching feed/ for .txt files
+  A: extrovert (coherence_floor 0.30)
+  B: introvert (coherence_floor 0.60)
+  tunnel=0.40, decay=0.94/0.90, maturity drift ±0.30
+──────────────────────────────────────────────────────────
 
-▸ dark fear cold
-  cave: me seek path
-
-▸ man woman child
-  cave: love home always
-
-▸ death spirit fire
-  cave: and BE change
-
-  *** SYMBOL EMERGED: dark+cold (depth=1, strength=0.999) ***
-  *** SYMBOL DIED: dark+cold (co-occ 0.01 < 0.525, uses 0/5, age 500) ***
-
-▸ ?              — list all glyphs (base + emerged)
-▸ stats          — co-occurrence, emergence status, field state
-▸ save           — save Hebbian state
-▸ quit           — save and exit
+[B] me BE
+[A] and one me
+[user] love woman child
+[B] woman and
+[A] good and me have woman BE
+  *** SYMBOL EMERGED: me+BE (id=88, depth=1, strength=0.999) ***
+[B] and+BE me
 ```
 
-Drop `.txt` files into `feed/` — Dracula, Frankenstein, anything. The cave devours them sentence by sentence.
-
-### Browser (no install)
-
-Open `index.html`. Click glyphs to speak. `?` = help, `⚙` = training engine.
+Drop `.txt` files into `feed/` — Dracula, Frankenstein, anything. Both caves devour them sentence by sentence.
 
 ### Training (notorch C)
 
@@ -328,13 +316,7 @@ cat data/dracula.txt data/frankenstein.txt data/miller.txt \
                   --dataset data/my_new_text.txt --preset medium --steps 500
 ```
 
-`train_cavellman` reads raw English, splits on `.!?` (SPA phonons), and compresses each sentence through the same `semantic_tokenizer.h` the engine uses at inference — train and runtime share one source of truth for the 88 canonical glyphs. `--start-from FILE` is what the dual-mode mass-threshold CPT uses under the hood.
-
-### Tests
-
-```bash
-node tests/test_semantic_tokenizer.js    # 35 tests
-```
+`train_cavellman` reads raw English, splits on `.!?` (SPA phonons), and compresses each sentence through the same `semantic_tokenizer.h` the engine uses at inference — train and runtime share one source of truth for the 88 canonical glyphs. `--start-from FILE` is what the ring's mass-threshold CPT uses under the hood.
 
 ---
 
@@ -404,3 +386,49 @@ This project is licensed under the GNU General Public License v3.0 or later (GPL
 ## Credits
 
 88-glyph alphabet inspired by Genevieve von Petzinger's 32 cave signs. Originally forked from [emojiGPT](https://github.com/MattWenJun/emojiGPT) by @MattWenJun (who forked Karpathy's [microgpt.py](https://gist.github.com/karpathy/8627fe009c40f57531cb18360106ce95)). Rebuilt from scratch: semantic tokenizer, Hebbian plasticity, symbol emergence with natural selection, SPA sentence phonons, async self-learning, diffusion engine, cave-painting SVG hieroglyphs, C engine on [notorch](https://github.com/ariannamethod/notorch). Dual-mode silence-gate physics borrowed from [Stanley](https://github.com/ariannamethod/stanley), tunnel/resonance primitives from [AML](https://github.com/ariannamethod/ariannamethod.ai), mass-threshold CPT pattern from [arianna.c](https://github.com/ariannamethod/arianna.c). Corpora include Gutenberg public-domain texts, a FineWeb-EDU sample, and Oleg Ataev's own *SUPPERTIME v2.0*. — [Arianna Method](https://github.com/ariannamethod).
+
+---
+
+## Appendix A — a cave ring transcript
+
+Default `./cavellman` loads `cavellman_A.bin` (Dracula, extrovert) and `cavellman_B.bin` (Frankenstein, introvert), wires a shared `feed/` learner so both caves hear anything dropped in, and opens the ring. A human may type glyphs into the ring, or stay silent. The caves do not need you.
+
+```
+$ ./cavellman
+  loaded 36/36 tensors, Hebbian rank=4
+  loaded 36/36 tensors, Hebbian rank=4
+══════════════════════════════════════════════════════════
+  caveLLMan — DUAL MODE
+══════════════════════════════════════════════════════════
+  A: extrovert (coherence_floor 0.30)
+  B: introvert (coherence_floor 0.60)
+  tunnel=0.40, decay=0.94/0.90, maturity drift ±0.30
+  type glyphs any time to join the ring. 'quit' to exit.
+  [learner] watching feed/ for .txt files — both caves hear.
+──────────────────────────────────────────────────────────
+
+> stats
+  [A] exc=0.02 floor=0.30 diss=0.00 spoke=0/39
+  [B] exc=0.02 floor=0.60 diss=0.00 spoke=0/39
+
+> dark fear fire
+[user] dark fear fire
+  *** SYMBOL EMERGED: fire+fear    (id=88, depth=1, strength=0.999) ***
+[A] and BE
+  *** SYMBOL EMERGED: and+BE       (id=88, depth=1, strength=0.999) ***
+[B] one
+  *** SYMBOL EMERGED: dark+fear    (id=89, depth=1, strength=0.999) ***
+[A] and woman and dark+fear
+  *** SYMBOL EMERGED: woman+and    (id=89, depth=1, strength=0.999) ***
+[B] me have
+  *** SYMBOL EMERGED: me+have      (id=90, depth=1, strength=0.999) ***
+[A] me
+```
+
+Notes on what actually happens here:
+
+- `./cavellman` takes no flags. The single-engine dialogue loop has been deprecated — a human-in-center chatbot is not what this repo is for anymore.
+- Five composite symbols are born from a three-glyph user prompt: `fire+fear`, `and+BE`, `dark+fear`, `woman+and`, `me+have`. Their numeric ids (88+) share the transformer head's output slots and can therefore be sampled back into the ring.
+- **A actually uses a composite mid-sentence:** the fourth line `and woman and dark+fear` contains the id-89 symbol that was born one tick earlier. The ring's own emergence is feeding back into its generation on the same interaction.
+- A and B have asymmetric silence gates (0.30 vs 0.60), so they disagree on when to speak. Sometimes only one answers; sometimes neither. Silence is a legal response.
+- The `[learner] watching feed/` line is not decoration — drop any `.txt` into `feed/` while this is running and both caves will devour it in passive-reading mode (0.3× signal, V-only). The engines' own `*_holding.txt` CPT buffers are skipped.

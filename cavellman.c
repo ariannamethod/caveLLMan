@@ -574,81 +574,6 @@ static int sample_top_p(float* logits, int n, float temp, float top_p) {
     return indices[0];
 }
 
-/* ── Interactive generate ───────────────────────────────────────────────── */
-
-static void generate(CaveModel* m, CaveVocab* vocab, int* prompt, int prompt_len,
-                     int max_gen, float temp, float top_p) {
-    int Vp = vocab->vocab_size + 2; /* +BOS +MASK */
-    int ctx[MAX_SEQ];
-    int gen_tokens[MAX_SEQ];
-    int ctx_len = 0, gen_len = 0;
-
-    kv_reset();
-
-    /* BOS + prompt */
-    ctx[ctx_len++] = vocab->bos_id;
-    for (int i = 0; i < prompt_len && ctx_len < CTX; i++)
-        ctx[ctx_len++] = prompt[i];
-
-    /* Print prompt glyphs */
-    printf("  you: ");
-    for (int i = 0; i < prompt_len; i++) printf("%s ", vocab->tokens[prompt[i]]);
-    printf("\n  cave: ");
-
-    /* Prefill */
-    for (int i = 0; i < ctx_len - 1; i++) {
-        float* logits = model_forward(m, ctx[i], i);
-        free(logits);
-    }
-
-    /* Generate */
-    int last_id = ctx[ctx_len - 1];
-    for (int step = 0; step < max_gen && ctx_len < CTX; step++) {
-        float* logits = model_forward(m, last_id, ctx_len - 1);
-        int next = sample_top_p(logits, Vp, temp, top_p);
-        free(logits);
-
-        if (next == vocab->bos_id) break;
-
-        ctx[ctx_len++] = next;
-        gen_tokens[gen_len++] = next;
-
-        if (next >= 0 && next < vocab->vocab_size)
-            printf("%s ", vocab->tokens[next]);
-        fflush(stdout);
-
-        last_id = next;
-    }
-    printf("\n");
-
-    /* ── POST-GENERATION: Hebbian update + co-occurrence + emergence ── */
-
-    /* 1. Hebbian plasticity: learn from this interaction (active, full signal) */
-    hebbian_update(m, NULL, vocab->vocab_size + 2, gen_tokens, gen_len, 0);
-
-    /* 2. Count emerged symbol usage */
-    count_emerged_usage(m, vocab, gen_tokens, gen_len);
-
-    /* 3. Co-occurrence: track which glyphs appear together */
-    int all_tokens[MAX_SEQ];
-    int all_len = 0;
-    for (int i = 0; i < prompt_len; i++) all_tokens[all_len++] = prompt[i];
-    for (int i = 0; i < gen_len; i++) all_tokens[all_len++] = gen_tokens[i];
-    cooccur_update(&m->cooccur, all_tokens, all_len);
-
-    /* 3. Decay co-occurrence (slow) */
-    cooccur_decay(&m->cooccur, 0.999f);
-
-    /* 5. Check survival — evolution needs death */
-    check_symbol_survival(m, vocab);
-
-    /* 6. Try symbol emergence (birth is free, survival is not) */
-    int emerged = try_emerge_symbol(m, vocab);
-    if (emerged >= 0) {
-        printf("  [the cave has a new sign: %s]\n", vocab->tokens[emerged]);
-    }
-}
-
 /* ── Tokenize prompt ────────────────────────────────────────────────────── */
 
 static int tokenize_prompt(const char* input, CaveVocab* vocab, int* tokens, int max) {
@@ -666,68 +591,19 @@ static int tokenize_prompt(const char* input, CaveVocab* vocab, int* tokens, int
 
 /* ── Save/load Hebbian state ────────────────────────────────────────────── */
 
-static void save_state(CaveModel* m, CaveVocab* vocab, const char* path) {
-    FILE* f = fopen(path, "wb");
-    if (!f) { printf("Cannot save state to %s\n", path); return; }
-
-    /* Co-occurrence */
-    fwrite(&m->cooccur, sizeof(CoOccurrence), 1, f);
-
-    /* Emerged symbols */
-    fwrite(&m->n_emerged, sizeof(int), 1, f);
-    fwrite(m->emerged, sizeof(EmergedSymbol), m->n_emerged, f);
-
-    /* Hebbian LoRA weights */
-    for (int l = 0; l < N_L; l++) {
-        fwrite(m->layers[l].heb_A_q, sizeof(float), E * HEBBIAN_RANK, f);
-        fwrite(m->layers[l].heb_B_q, sizeof(float), HEBBIAN_RANK * E, f);
-        fwrite(m->layers[l].heb_A_v, sizeof(float), E * HEBBIAN_RANK, f);
-        fwrite(m->layers[l].heb_B_v, sizeof(float), HEBBIAN_RANK * E, f);
-    }
-
-    /* Extended vocab */
-    fwrite(&vocab->vocab_size, sizeof(int), 1, f);
-    for (int i = vocab->base_size; i < vocab->vocab_size; i++)
-        fwrite(vocab->tokens[i], 32, 1, f);
-
-    fclose(f);
-    printf("  state saved to %s (%d emerged symbols, %d interactions)\n",
-           path, m->n_emerged, m->cooccur.total_interactions);
-}
-
-static void load_state(CaveModel* m, CaveVocab* vocab, const char* path) {
-    FILE* f = fopen(path, "rb");
-    if (!f) return; /* first run, no state yet */
-
-    fread(&m->cooccur, sizeof(CoOccurrence), 1, f);
-    fread(&m->n_emerged, sizeof(int), 1, f);
-    fread(m->emerged, sizeof(EmergedSymbol), m->n_emerged, f);
-
-    for (int l = 0; l < N_L; l++) {
-        fread(m->layers[l].heb_A_q, sizeof(float), E * HEBBIAN_RANK, f);
-        fread(m->layers[l].heb_B_q, sizeof(float), HEBBIAN_RANK * E, f);
-        fread(m->layers[l].heb_A_v, sizeof(float), E * HEBBIAN_RANK, f);
-        fread(m->layers[l].heb_B_v, sizeof(float), HEBBIAN_RANK * E, f);
-    }
-
-    int saved_vocab;
-    fread(&saved_vocab, sizeof(int), 1, f);
-    for (int i = vocab->base_size; i < saved_vocab && i < MAX_VOCAB; i++) {
-        fread(vocab->tokens[i], 32, 1, f);
-        vocab->vocab_size = i + 1;
-    }
-
-    fclose(f);
-    printf("  state loaded: %d emerged symbols, %d interactions\n",
-           m->n_emerged, m->cooccur.total_interactions);
-}
-
-
 /* ── Async self-learning thread ─────────────────────────────────────────── */
 
+/*
+ * The ring has one shared feed/ directory. When a .txt file is dropped in,
+ * BOTH caves hear the same text — a single world, two observers. This is
+ * the only channel by which the human (or any external process) can
+ * nudge learning: drop a file, walk away, let the caves devour it.
+ */
 typedef struct {
-    CaveModel*  model;
-    CaveVocab*  vocab;
+    CaveModel*  model_a;
+    CaveVocab*  vocab_a;
+    CaveModel*  model_b;
+    CaveVocab*  vocab_b;
     const char* feed_dir;    /* directory to watch for .txt files */
     int         running;
     int         files_consumed;
@@ -780,20 +656,18 @@ static void learn_from_text(AsyncLearner* al, const char* text, int text_len) {
         if (n >= 2) {
             pthread_mutex_lock(&al->lock);
 
-            /* Hebbian: passive reading — 0.3x signal, V-only */
-            hebbian_update(al->model, NULL, al->vocab->vocab_size + 2, tokens, n, 1);
+            /* Both caves hear the same sentence — passive reading, 0.3x, V-only. */
+            hebbian_update(al->model_a, NULL, al->vocab_a->vocab_size + 2, tokens, n, 1);
+            count_emerged_usage(al->model_a, al->vocab_a, tokens, n);
+            cooccur_update(&al->model_a->cooccur, tokens, n);
+            check_symbol_survival(al->model_a, al->vocab_a);
+            try_emerge_symbol(al->model_a, al->vocab_a);
 
-            /* Count emerged-symbol usage during passive reading too —
-             * otherwise every newly-emerged symbol dies at 0/SURVIVAL_USES
-             * when the cave is only being fed, never spoken to. */
-            count_emerged_usage(al->model, al->vocab, tokens, n);
-
-            /* Co-occurrence */
-            cooccur_update(&al->model->cooccur, tokens, n);
-
-            /* Survival check + emergence */
-            check_symbol_survival(al->model, al->vocab);
-            try_emerge_symbol(al->model, al->vocab);
+            hebbian_update(al->model_b, NULL, al->vocab_b->vocab_size + 2, tokens, n, 1);
+            count_emerged_usage(al->model_b, al->vocab_b, tokens, n);
+            cooccur_update(&al->model_b->cooccur, tokens, n);
+            check_symbol_survival(al->model_b, al->vocab_b);
+            try_emerge_symbol(al->model_b, al->vocab_b);
 
             al->lines_learned++;
             pthread_mutex_unlock(&al->lock);
@@ -813,9 +687,10 @@ static void* learner_thread(void* arg) {
         while ((ent = readdir(dir)) != NULL) {
             if (!al->running) break;
 
-            /* Only .txt files */
+            /* Only .txt files, but never the engines' own holding buffers */
             int nlen = (int)strlen(ent->d_name);
             if (nlen < 5 || strcmp(ent->d_name + nlen - 4, ".txt") != 0) continue;
+            if (nlen >= 12 && strcmp(ent->d_name + nlen - 12, "_holding.txt") == 0) continue;
 
             /* Build path */
             char path[1024];
@@ -860,12 +735,15 @@ static void* learner_thread(void* arg) {
 static AsyncLearner g_learner;
 static pthread_t    g_learner_tid;
 
-static void start_learner(CaveModel* model, CaveVocab* vocab, const char* feed_dir) {
-    /* Create feed directory if needed */
+static void start_learner(CaveModel* A, CaveVocab* vA,
+                          CaveModel* B, CaveVocab* vB,
+                          const char* feed_dir) {
     mkdir(feed_dir, 0755);
 
-    g_learner.model = model;
-    g_learner.vocab = vocab;
+    g_learner.model_a = A;
+    g_learner.vocab_a = vA;
+    g_learner.model_b = B;
+    g_learner.vocab_b = vB;
     g_learner.feed_dir = feed_dir;
     g_learner.running = 1;
     g_learner.files_consumed = 0;
@@ -873,7 +751,7 @@ static void start_learner(CaveModel* model, CaveVocab* vocab, const char* feed_d
     pthread_mutex_init(&g_learner.lock, NULL);
 
     pthread_create(&g_learner_tid, NULL, learner_thread, &g_learner);
-    printf("  [learner] watching %s/ for .txt files\n", feed_dir);
+    printf("  [learner] watching %s/ for .txt files — both caves hear.\n", feed_dir);
 }
 
 static void stop_learner(void) {
@@ -1283,14 +1161,21 @@ static void dual_main(CaveModel* A, CaveModel* B, CaveVocab* vA, CaveVocab* vB,
     printf("  tunnel=%.2f, decay=%.2f/%.2f, maturity drift ±%.2f\n",
            TUNNEL_THRESHOLD, EXCITEMENT_DECAY, DISSONANCE_DECAY, MATURITY_CAP);
     printf("  type glyphs any time to join the ring. 'quit' to exit.\n");
+    start_learner(A, vA, B, vB, "feed");
     printf("──────────────────────────────────────────────────────────\n\n");
 
     int running = 1;
     while (running) {
+        /* Hold the learner's lock while we mutate field/model state —
+         * otherwise the feed/ thread races us on cooccur and emergence. */
+        pthread_mutex_lock(&g_learner.lock);
         /* 1. User input (non-blocking) */
         char ubuf[512];
         if (try_read_user_line(ubuf, sizeof(ubuf)) > 0) {
-            if (strcmp(ubuf, "quit") == 0 || strcmp(ubuf, "exit") == 0) break;
+            if (strcmp(ubuf, "quit") == 0 || strcmp(ubuf, "exit") == 0) {
+                pthread_mutex_unlock(&g_learner.lock);
+                break;
+            }
             if (strcmp(ubuf, "stats") == 0) {
                 printf("  [A] exc=%.2f floor=%.2f diss=%.2f spoke=%d/%d\n",
                        fA.excitement, fA.coherence_floor, fA.dissonance,
@@ -1298,6 +1183,7 @@ static void dual_main(CaveModel* A, CaveModel* B, CaveVocab* vA, CaveVocab* vB,
                 printf("  [B] exc=%.2f floor=%.2f diss=%.2f spoke=%d/%d\n",
                        fB.excitement, fB.coherence_floor, fB.dissonance,
                        fB.spoke_count, fB.total_count);
+                pthread_mutex_unlock(&g_learner.lock);
                 continue;
             }
             int utoks[MAX_SEQ];
@@ -1374,9 +1260,13 @@ static void dual_main(CaveModel* A, CaveModel* B, CaveVocab* vA, CaveVocab* vB,
         field_microtrain_tick(&fA, A);
         field_microtrain_tick(&fB, B);
 
-        /* 6. Pace */
+        pthread_mutex_unlock(&g_learner.lock);
+
+        /* 6. Pace (outside the lock so the feed/ thread can work) */
         usleep(DUAL_TICK_US);
     }
+
+    stop_learner();
 
     /* If a microtrain child is still running when we quit, wait for it
      * politely so we don't leave a zombie. */
@@ -1397,46 +1287,39 @@ int main(int argc, char** argv) {
      * otherwise dual-mode dialogue disappears into libc buffers until quit. */
     setvbuf(stdout, NULL, _IONBF, 0);
 
-    const char* weights_path = "weights/cavellman_v3.bin";
-    const char* state_path = "weights/cavellman.state";
+    /* Dual is the only mode. Single-dialogue was deprecated — the human is
+     * no longer the center of the ring. Default weights are the asymmetric
+     * A/B pair (Dracula extrovert + Frankenstein introvert). */
+    const char* weights_a = "weights/cavellman_A.bin";
+    const char* weights_b = "weights/cavellman_B.bin";
     const char* preset_name = "small";
-    const char* weights_a = NULL;
-    const char* weights_b = NULL;
-    int dual = 0;
     float temp = 0.8f, top_p = 0.9f;
-    int max_gen = 0, seed = 42;
+    int seed = 42;
 
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--weights") == 0 && i+1 < argc) weights_path = argv[++i];
-        else if (strcmp(argv[i], "--state") == 0 && i+1 < argc) state_path = argv[++i];
+        if (strcmp(argv[i], "--weights") == 0 && i+1 < argc) {
+            /* Shared weights for both engines (override A/B defaults). */
+            weights_a = weights_b = argv[++i];
+        }
         else if (strcmp(argv[i], "--preset") == 0 && i+1 < argc) preset_name = argv[++i];
         else if (strcmp(argv[i], "--temp") == 0 && i+1 < argc) temp = (float)atof(argv[++i]);
         else if (strcmp(argv[i], "--top-p") == 0 && i+1 < argc) top_p = (float)atof(argv[++i]);
-        else if (strcmp(argv[i], "--max") == 0 && i+1 < argc) max_gen = atoi(argv[++i]);
         else if (strcmp(argv[i], "--seed") == 0 && i+1 < argc) seed = atoi(argv[++i]);
-        else if (strcmp(argv[i], "--dual") == 0) dual = 1;
-        else if (strcmp(argv[i], "--weights-a") == 0 && i+1 < argc) { weights_a = argv[++i]; dual = 1; }
-        else if (strcmp(argv[i], "--weights-b") == 0 && i+1 < argc) { weights_b = argv[++i]; dual = 1; }
+        else if (strcmp(argv[i], "--weights-a") == 0 && i+1 < argc) weights_a = argv[++i];
+        else if (strcmp(argv[i], "--weights-b") == 0 && i+1 < argc) weights_b = argv[++i];
         else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
-            printf("cavellman — self-evolving hieroglyphic language model\n\n");
-            printf("  --weights FILE     Weight file (default: weights/cavellman_v3.bin)\n");
-            printf("  --state FILE       Hebbian state file (default: weights/cavellman.state)\n");
+            printf("cavellman — self-evolving hieroglyphic language model (dual-only)\n\n");
+            printf("  --weights FILE     Shared weights for both engines\n");
+            printf("  --weights-a FILE   A's weights (extrovert, coherence_floor 0.30)\n");
+            printf("  --weights-b FILE   B's weights (introvert, coherence_floor 0.60)\n");
             printf("  --preset NAME      Model preset (default: small)\n");
             printf("  --temp FLOAT       Temperature (default: 0.8)\n");
             printf("  --top-p FLOAT      Nucleus sampling (default: 0.9)\n");
-            printf("  --max N            Max tokens to generate (default: CTX)\n");
-            printf("  --seed N           RNG seed (default: 42)\n");
-            printf("\nDual mode (two caves talking, with user-in-the-ring):\n");
-            printf("  --dual             Enable dual engines (shares --weights if -a/-b omitted)\n");
-            printf("  --weights-a FILE   A's weights (extrovert, coherence_floor 0.30)\n");
-            printf("  --weights-b FILE   B's weights (introvert, coherence_floor 0.60)\n");
+            printf("  --seed N           RNG seed (default: 42)\n\n");
+            printf("Default: two caves (A=Dracula extrovert, B=Frankenstein introvert) talk.\n");
+            printf("You can type glyphs into the ring, or stay silent — the cave does not need you.\n");
             return 0;
         }
-    }
-
-    if (dual) {
-        if (!weights_a) weights_a = weights_path;
-        if (!weights_b) weights_b = weights_path;
     }
 
     /* Apply preset */
@@ -1445,143 +1328,32 @@ int main(int argc, char** argv) {
         if (strcmp(PRESETS[i].name, preset_name) == 0) { pr = &PRESETS[i]; break; }
     if (!pr) { printf("Unknown preset: %s\n", preset_name); return 1; }
     E = pr->embd; H = pr->heads; HD = E / H; FFN_D = 4 * E; N_L = pr->layers; CTX = pr->ctx;
-    if (max_gen <= 0) max_gen = CTX - 1;
     srand(seed);
 
-    /* ── Dual mode: load two models, run the field loop, exit ──────────── */
-    if (dual) {
-        char vpa[512], vpb[512];
-        snprintf(vpa, sizeof(vpa), "%s.vocab", weights_a);
-        snprintf(vpb, sizeof(vpb), "%s.vocab", weights_b);
+    /* ── Load both caves and run the field loop ────────────────────────── */
+    char vpa[512], vpb[512];
+    snprintf(vpa, sizeof(vpa), "%s.vocab", weights_a);
+    snprintf(vpb, sizeof(vpb), "%s.vocab", weights_b);
 
-        static CaveVocab vocab_a, vocab_b;
-        memset(&vocab_a, 0, sizeof(vocab_a));
-        memset(&vocab_b, 0, sizeof(vocab_b));
-        if (load_vocab(vpa, &vocab_a) != 0) return 1;
-        if (load_vocab(vpb, &vocab_b) != 0) return 1;
+    static CaveVocab vocab_a, vocab_b;
+    memset(&vocab_a, 0, sizeof(vocab_a));
+    memset(&vocab_b, 0, sizeof(vocab_b));
+    if (load_vocab(vpa, &vocab_a) != 0) return 1;
+    if (load_vocab(vpb, &vocab_b) != 0) return 1;
 
-        nt_seed(seed);
-        CaveModel* A = model_load(weights_a, vocab_a.vocab_size);
-        if (!A) return 1;
-        CaveModel* B = model_load(weights_b, vocab_b.vocab_size);
-        if (!B) { free(A); return 1; }
-
-        /* Fresh Hebbian state per engine. User can point --state at per-engine
-         * files later if persistence across runs is wanted. */
-        cooccur_init(&A->cooccur);
-        cooccur_init(&B->cooccur);
-
-        dual_main(A, B, &vocab_a, &vocab_b, temp, top_p,
-                  weights_a, weights_b, preset_name);
-
-        free(A->layers); free(A);
-        free(B->layers); free(B);
-        return 0;
-    }
-
-    printf("══════════════════════════════════════════════════════════\n");
-    printf("  caveLLMan — self-evolving hieroglyphic language model\n");
-    printf("══════════════════════════════════════════════════════════\n");
-    printf("  weights: %s\n  preset: %s (E=%d H=%d L=%d CTX=%d)\n",
-           weights_path, preset_name, E, H, N_L, CTX);
-    printf("  temp=%.2f, top_p=%.2f, max=%d\n", temp, top_p, max_gen);
-    printf("  hebbian: rank=%d, lr=%.4f\n", HEBBIAN_RANK, 0.001f);
-    printf("  emergence: threshold=%.2f, window=%d\n", EMERGE_THRESHOLD, DISCIPLINE_WINDOW);
-
-    /* Load vocab */
-    char vocab_path[512];
-    snprintf(vocab_path, sizeof(vocab_path), "%s.vocab", weights_path);
-    CaveVocab vocab;
-    memset(&vocab, 0, sizeof(vocab));
-    if (load_vocab(vocab_path, &vocab) != 0) return 1;
-    printf("  vocab: %d base glyphs\n", vocab.vocab_size);
-
-    /* Load model */
-    printf("  loading weights...\n");
     nt_seed(seed);
-    CaveModel* model = model_load(weights_path, vocab.vocab_size);
-    if (!model) return 1;
+    CaveModel* A = model_load(weights_a, vocab_a.vocab_size);
+    if (!A) return 1;
+    CaveModel* B = model_load(weights_b, vocab_b.vocab_size);
+    if (!B) { free(A); return 1; }
 
-    /* Load Hebbian state (if exists) */
-    load_state(model, &vocab, state_path);
-    if (model->n_emerged > 0) {
-        printf("  emerged symbols: ");
-        for (int i = 0; i < model->n_emerged; i++)
-            printf("%s ", model->emerged[i].name);
-        printf("\n");
-    }
+    cooccur_init(&A->cooccur);
+    cooccur_init(&B->cooccur);
 
-    printf("══════════════════════════════════════════════════════════\n\n");
-    /* Start async learner (watches feed/ directory) */
-    start_learner(model, &vocab, "feed");
+    dual_main(A, B, &vocab_a, &vocab_b, temp, top_p,
+              weights_a, weights_b, preset_name);
 
-    printf("Speak in glyphs. Type 'quit' to exit. '?' for glyph list.\n");
-    printf("Drop .txt files into feed/ — the cave devours them.\n\n");
-
-    /* Interactive loop */
-    char input[1024];
-    while (1) {
-        printf("▸ ");
-        fflush(stdout);
-        if (!fgets(input, sizeof(input), stdin)) break;
-
-        int len = (int)strlen(input);
-        while (len > 0 && (input[len-1] == '\n' || input[len-1] == '\r')) input[--len] = '\0';
-        if (len == 0) continue;
-        if (strcmp(input, "quit") == 0 || strcmp(input, "exit") == 0) break;
-        if (strcmp(input, "?") == 0) {
-            printf("\n  Base glyphs (%d):\n  ", vocab.base_size);
-            for (int i = 0; i < vocab.base_size; i++) {
-                printf("%s ", vocab.tokens[i]);
-                if ((i + 1) % 12 == 0) printf("\n  ");
-            }
-            if (model->n_emerged > 0) {
-                printf("\n\n  Emerged symbols (%d):\n  ", model->n_emerged);
-                for (int i = 0; i < model->n_emerged; i++)
-                    printf("%s (%.2f) ", model->emerged[i].name,
-                           model->emerged[i].strength);
-            }
-            printf("\n\n");
-            continue;
-        }
-        if (strcmp(input, "save") == 0) {
-            save_state(model, &vocab, state_path);
-            continue;
-        }
-        if (strcmp(input, "stats") == 0) {
-            printf("  interactions: %d\n", model->cooccur.total_interactions);
-            printf("  emerged: %d/%d\n", model->n_emerged, MAX_EMERGED);
-            printf("  next emergence window: %d interactions\n",
-                   DISCIPLINE_WINDOW - (model->cooccur.total_interactions - model->cooccur.last_emergence));
-            printf("  top co-occurrences:\n");
-            for (int i = 0; i < vocab.base_size; i++)
-                for (int j = i+1; j < vocab.base_size; j++)
-                    if (model->cooccur.matrix[i][j] > 0.5f)
-                        printf("    %s + %s = %.3f\n", vocab.tokens[i], vocab.tokens[j], model->cooccur.matrix[i][j]);
-            printf("\n");
-            continue;
-        }
-
-        /* Tokenize and generate */
-        int prompt_tokens[MAX_SEQ];
-        int n_prompt = tokenize_prompt(input, &vocab, prompt_tokens, CTX - 2);
-        if (n_prompt == 0) {
-            printf("  (no recognized glyphs, type ? for list)\n");
-            continue;
-        }
-
-        pthread_mutex_lock(&g_learner.lock);
-        generate(model, &vocab, prompt_tokens, n_prompt, max_gen, temp, top_p);
-        pthread_mutex_unlock(&g_learner.lock);
-    }
-
-    /* Stop learner and save */
-    stop_learner();
-    save_state(model, &vocab, state_path);
-
-    printf("\nthe cave remembers. (%d files consumed, %d lines learned)\n",
-           g_learner.files_consumed, g_learner.lines_learned);
-    free(model->layers);
-    free(model);
+    free(A->layers); free(A);
+    free(B->layers); free(B);
     return 0;
 }
