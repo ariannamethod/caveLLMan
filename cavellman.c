@@ -1280,8 +1280,24 @@ static Cave* colony_mitosis(const Cave* pa, const Cave* pb, const char* preset_n
     if (strcmp(pa_preset, pb_preset) == 0) {
         const char* smaller = smaller_preset_name(pa_preset);
         if (strcmp(smaller, pa_preset) != 0) {
-            child_preset = smaller;
-            do_downsize = 1;
+            /* HD gate: prefix truncation in blend_weights_downsized only
+             * preserves head boundaries when head_dim matches exactly
+             * between parent and child. In the current preset table every
+             * downsize pair (medium→small, small→standard, standard→micro,
+             * micro→tiny) has HD_p ≠ HD_c, so truncation would slice
+             * through head boundaries — intra-head competing-conventions
+             * on a smaller scale (arxiv 2003.10306). Fall back to same-size
+             * blend until head-aware truncation lands. */
+            const Preset* pa_pr_probe = find_preset(pa_preset);
+            const Preset* ch_pr_probe = find_preset(smaller);
+            int hd_p = pa_pr_probe ? pa_pr_probe->embd / pa_pr_probe->heads : 0;
+            int hd_c = ch_pr_probe ? ch_pr_probe->embd / ch_pr_probe->heads : 0;
+            if (pa_pr_probe && ch_pr_probe && hd_p == hd_c) {
+                child_preset = smaller;
+                do_downsize = 1;
+            } else {
+                child_preset = pa_preset;
+            }
         } else {
             child_preset = pa_preset;
         }
