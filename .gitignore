@@ -11,6 +11,9 @@ train_diffusion
 # runtime Hebbian state (per-user)
 *.state
 
+# per-cave persistence spores — generated at runtime, not shipped
+weights/cavellman_*.spore
+
 # feed directory is runtime — user drops books here
 feed/
 

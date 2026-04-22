@@ -489,6 +489,11 @@ void nt_print_params(nt_tensor** params, int n, const char** names);
 // Seed RNG
 void nt_seed(uint64_t seed);
 
+// out[m] = W[m,n] @ x[n]  — BLAS matrix-vector path for inference hot loops
+// (backported from upstream notorch 59327ba). Under USE_BLAS uses
+// cblas_sgemv (Accelerate / OpenBLAS); without BLAS falls back to naive.
+void nt_blas_matvec(float *out, const float *W, const float *x, int m, int n);
+
 #ifdef __cplusplus
 }
 #endif

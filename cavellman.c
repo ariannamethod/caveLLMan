@@ -458,11 +458,13 @@ static void rmsnorm(float* out, const float* x, const float* gamma, int n) {
 }
 
 static void matvec(float* out, const float* W, const float* x, int nout, int nin) {
-    for (int i = 0; i < nout; i++) {
-        float s = 0;
-        for (int j = 0; j < nin; j++) s += W[i * nin + j] * x[j];
-        out[i] = s;
-    }
+    /* BLAS fast path: on Accelerate/OpenBLAS this is cblas_sgemv; without
+     * USE_BLAS it falls back to the same naive nested loop we used to have.
+     * Medium preset (E=128, L=4, H=8): 4 QKVO × 128² + 2 FFN × 128×512 +
+     * head × V×128 per token — on pure C that was several ms/token; sgemv
+     * drops it to tens of μs. At 0.1s tick rate that's the difference
+     * between idle cave and talking cave. */
+    nt_blas_matvec(out, W, x, nout, nin);
 }
 
 /* Apply Hebbian LoRA: out += B @ (A @ x) */
@@ -671,7 +673,9 @@ static int tokenize_prompt(const char* input, CaveVocab* vocab, int* tokens, int
     return n;
 }
 
-/* ── Save/load Hebbian state ────────────────────────────────────────────── */
+/* Persistence layer — binary per-cave spore with fingerprint + CRC —
+ * lives at end of file, just before main(). See the persistence section
+ * below and memory/project_cavellman_persistence.md for the design note. */
 
 /* ── Ring physics types ─────────────────────────────────────────────────
  *
@@ -692,7 +696,7 @@ static int tokenize_prompt(const char* input, CaveVocab* vocab, int* tokens, int
 #define MATURITY_CAP        0.30f
 #define SPEAK_RATIO_HIGH    0.70f
 #define SPEAK_RATIO_LOW     0.20f
-#define DUAL_TICK_US        400000 /* 0.4s per tick */
+#define DUAL_TICK_US        100000 /* 0.1s per tick — tightened 2026-04-22 from 0.4s for livelier ring */
 #define DUAL_MAX_GEN        24
 
 #define MICRO_MIN_BYTES     2500
@@ -736,10 +740,36 @@ typedef struct {
     CaveField  field;
     int        owns_vocab;
     int        is_founder;   /* A and B — shielded from pressure death forever */
+    /* Persistence — "yesterday" on this cave's mind */
+    int     last_tokens[32]; /* what was on mind when cave slept; 32 = CAVE_LAST_TOKENS */
+    int     last_len;        /* 0..32 */
+    int64_t spore_saved_at;  /* 0 for cold-start cave, else header timestamp */
 } Cave;
 
 static Cave* g_colony[COLONY_MAX];
 static int   g_colony_n = 0;
+
+/* Forward declarations for the persistence layer (defined just above main).
+ * cave_new / colony_main / colony_mitosis call these to hydrate / save /
+ * blend spore state. */
+static uint64_t cave_weights_fingerprint(nt_tensor** tensors, int n);
+static int      load_cave_spore(Cave* c, uint64_t expected_fingerprint,
+                                int* last_tokens_out, int* last_len_out);
+static int      save_cave_spore(const Cave* c, const int* last_tokens,
+                                int last_len, uint64_t fingerprint);
+static float    cave_wake_impulse(Cave* c, int64_t saved_at);
+static int      blend_spores(const Cave* pa, const Cave* pb, Cave* child);
+
+/* Helper: compute this cave's weights fingerprint from the already-loaded
+ * CaveModel tensors. */
+static uint64_t cave_fingerprint_of(const Cave* c) {
+    if (!c || !c->model) return 0;
+    nt_tensor* fp[4] = {
+        c->model->wte, c->model->wpe,
+        c->model->layers[0].rms1, c->model->layers[0].wq
+    };
+    return cave_weights_fingerprint(fp, 4);
+}
 
 /* ── Async self-learning thread ─────────────────────────────────────────── */
 
@@ -989,6 +1019,28 @@ static Cave* cave_new(const char* name, float baseline,
 
     /* Field */
     field_init(&c->field, name, baseline, weights_path, preset_name);
+
+    /* Persistence init (defaults = cold start) */
+    memset(c->last_tokens, 0, sizeof(c->last_tokens));
+    c->last_len = 0;
+    c->spore_saved_at = 0;
+
+    /* Try hydrating from spore. Fingerprint gates against wrong weights;
+     * CRC gates against corruption. On any failure — silent cold start. */
+    uint64_t fp = cave_fingerprint_of(c);
+    if (load_cave_spore(c, fp, c->last_tokens, &c->last_len) == 0) {
+        /* load_cave_spore stored header.saved_at implicitly via the
+         * header we read — we reach it back by reading the file again
+         * cheaply, but actually load_cave_spore now writes into
+         * c->spore_saved_at directly for wake_impulse to consume. */
+        /* (Signal that load succeeded: spore_saved_at > 0.) */
+        if (c->spore_saved_at > 0) {
+            float wake = cave_wake_impulse(c, c->spore_saved_at);
+            printf("  [%s] spore loaded — wake=%.2f, last_len=%d, emerged=%d\n",
+                   name, wake, c->last_len, c->model->n_emerged);
+        }
+    }
+
     return c;
 }
 
@@ -1337,6 +1389,18 @@ static Cave* colony_mitosis(const Cave* pa, const Cave* pb, const char* preset_n
         return NULL;
     }
     child->field.immunity_ticks = NEWBORN_IMMUNITY_TICKS;
+
+    /* Memory inheritance — child inherits parents' cooccur / emerged / Hebbian
+     * on top of the blended weights, so it doesn't boot with a blank surface
+     * language. last_tokens comes from a randomly-chosen parent (mother/father). */
+    blend_spores(pa, pb, child);
+    const Cave* chosen = (rand() % 2) ? pa : pb;
+    int n = chosen->last_len;
+    if (n > 32) n = 32;
+    memcpy(child->last_tokens, chosen->last_tokens, n * sizeof(int));
+    child->last_len = n;
+    child->spore_saved_at = (int64_t)time(NULL);
+
     colony_add(child);
     g_children_born++;
 
@@ -1816,14 +1880,44 @@ static void colony_main(float temp, float top_p, const char* preset_name) {
     int last_tokens[MAX_SEQ];
     int last_len = 0;
 
-    /* Bootstrap: seed every field with a neutral pulse (glyph "BE") so no
-     * cave deadlocks on all-zero excitement against a non-zero floor. */
-    int be_id = semtok_find_glyph("BE");
-    if (be_id >= 0) {
-        for (int ci = 0; ci < g_colony_n; ci++)
-            field_hear(&g_colony[ci]->field, g_colony[ci]->model, -1, be_id);
-        last_tokens[0] = be_id;
-        last_len = 1;
+    /* Bootstrap: speak-from-yesterday if any cave has a persisted last_tokens
+     * (spore hydrated in cave_new). Pick the cave with highest excitement
+     * after wake-impulse — its yesterday becomes the ring's opening context.
+     * Every other cave "hears" that awakening through field_hear (wake echo).
+     * Fallback for a fully cold-start ring: the neutral BE pulse. */
+    int best_ci = -1;
+    float best_exc = -1.0f;
+    for (int ci = 0; ci < g_colony_n; ci++) {
+        if (g_colony[ci]->last_len > 0 && g_colony[ci]->field.excitement > best_exc) {
+            best_exc = g_colony[ci]->field.excitement;
+            best_ci = ci;
+        }
+    }
+
+    if (best_ci >= 0 && best_exc > 0.0f) {
+        Cave* waker = g_colony[best_ci];
+        int n = waker->last_len;
+        if (n > MAX_SEQ) n = MAX_SEQ;
+        memcpy(last_tokens, waker->last_tokens, n * sizeof(int));
+        last_len = n;
+        /* Wake-echo: every cave in the ring hears the waker's yesterday
+         * as passive input — wakes excitement without a forward pass. */
+        for (int i = 0; i < n; i++) {
+            int prev = (i == 0) ? -1 : last_tokens[i-1];
+            for (int ci = 0; ci < g_colony_n; ci++)
+                field_hear(&g_colony[ci]->field, g_colony[ci]->model, prev, last_tokens[i]);
+        }
+        printf("  [wake] %s speaks from yesterday (%d tokens, exc %.2f)\n",
+               waker->field.name, n, best_exc);
+    } else {
+        /* Cold start — neutral BE pulse */
+        int be_id = semtok_find_glyph("BE");
+        if (be_id >= 0) {
+            for (int ci = 0; ci < g_colony_n; ci++)
+                field_hear(&g_colony[ci]->field, g_colony[ci]->model, -1, be_id);
+            last_tokens[0] = be_id;
+            last_len = 1;
+        }
     }
 
     printf("══════════════════════════════════════════════════════════\n");
@@ -1920,9 +2014,12 @@ static void colony_main(float temp, float top_p, const char* preset_name) {
                 field_append_holding(&other->field, c->vocab, gen, gn);
             }
 
-            /* Every ~5th utterance deposits in the shared dna/ pool so
-             * the colony can feed on its own speech via the learner. */
-            if ((++dna_counter % 5) == 0) dna_write_cave(c, gen, gn);
+            /* Every 2nd utterance deposits in the shared dna/ pool so
+             * the colony starts feeding on its own speech early — original
+             * threshold of 5 meant a quiet autonomous ring never hit the
+             * first DNA write (observed 2026-04-22: 3 utterances/hour with
+             * threshold 5 → zero DNA files, zero CPT trigger, zero mitosis). */
+            if ((++dna_counter % 2) == 0) dna_write_cave(c, gen, gn);
 
             memcpy(last_tokens, gen, (size_t)gn * sizeof(int));
             last_len = gn;
@@ -1937,8 +2034,38 @@ static void colony_main(float temp, float top_p, const char* preset_name) {
                 g_colony[ci]->field.immunity_ticks--;
         }
 
+        /* 5a. Spontaneous pulse — every ~500 ticks the quietest cave gets a
+         * small excitement kick so autonomous rings don't collapse into
+         * silent equilibrium (observed 2026-04-22: N=2 medium ring produced
+         * 3 utterances / hour without user input). Preserves autonomy —
+         * no external source, but the colony breathes on its own tempo. */
+        static int g_pulse_counter = 0;
+        if ((++g_pulse_counter % 500) == 0 && g_colony_n > 0) {
+            int quietest = 0;
+            float min_ratio = 1e9f;
+            for (int ci = 0; ci < g_colony_n; ci++) {
+                const CaveField* f = &g_colony[ci]->field;
+                float r = (f->total_count > 0)
+                    ? (float)f->spoke_count / (float)f->total_count : 0.0f;
+                if (r < min_ratio) { min_ratio = r; quietest = ci; }
+            }
+            g_colony[quietest]->field.excitement += 0.15f;
+            if (g_colony[quietest]->field.excitement > EXCITEMENT_CAP)
+                g_colony[quietest]->field.excitement = EXCITEMENT_CAP;
+        }
+
         /* 5b. Sexual mitosis — two fittest caves may spawn a child. */
         colony_try_mitosis(preset_name);
+
+        /* 5c. Periodic spore autosave every 200 ticks (safety against crash
+         * and ordinary wear — cave's current state becomes tomorrow's wake). */
+        static int g_save_counter = 0;
+        if ((++g_save_counter % 200) == 0) {
+            for (int ci = 0; ci < g_colony_n; ci++) {
+                Cave* c = g_colony[ci];
+                save_cave_spore(c, last_tokens, last_len, cave_fingerprint_of(c));
+            }
+        }
 
         pthread_mutex_unlock(&g_learner.lock);
 
@@ -1947,6 +2074,16 @@ static void colony_main(float temp, float top_p, const char* preset_name) {
     }
 
     stop_learner();
+
+    /* Save each cave's state before exit — this becomes tomorrow's wake. */
+    printf("\n");
+    for (int ci = 0; ci < g_colony_n; ci++) {
+        Cave* c = g_colony[ci];
+        if (save_cave_spore(c, last_tokens, last_len, cave_fingerprint_of(c)) == 0)
+            printf("  [%s] spore saved.\n", c->field.name);
+        else
+            printf("  [%s] spore save failed.\n", c->field.name);
+    }
 
     /* Reap any microtrain children still running at exit */
     for (int ci = 0; ci < g_colony_n; ci++) {
@@ -1962,6 +2099,473 @@ static void colony_main(float temp, float top_p, const char* preset_name) {
                f->coherence_floor, f->microtrain_done_count);
     }
     printf("the colony remembers.\n");
+}
+
+/* ── Persistence layer — per-cave binary spore ──────────────────────────
+ *
+ * Brings back the pre-colony save/load layer that was dropped during the
+ * ring pivot, extended with colony-aware semantics. Per-cave binary file
+ * weights/cavellman_<name>.spore. Fingerprint gates loading against the
+ * wrong weights (DoE mycelium convention). CRC32 tail gates against
+ * corrupted files. No SQLite — ring N≤8, binary spore is the right grain.
+ *
+ * What we persist: cooccur matrix, emerged symbols (+ their names),
+ * Hebbian LoRA adapters, CaveField, last_tokens, saved_at.
+ * What we don't: excitement/dissonance (transient, rebuilt by wake),
+ * KV cache (transient), holding buffers (already on disk as files).
+ *
+ * Functions are defined here but NOT YET wired into cave_new /
+ * colony_main / colony_mitosis. Wire-in happens after the current
+ * observation dry-run completes. See project_cavellman_persistence.md.
+ */
+
+#define CAVE_SPORE_MAGIC    0x45564143u     /* 'CAVE' */
+#define CAVE_SPORE_VERSION  1u
+#define CAVE_LAST_TOKENS    32              /* "what was on mind when sleeping" */
+
+typedef struct {
+    uint32_t magic;
+    uint32_t version;
+    int64_t  saved_at;
+    uint64_t weights_fingerprint;
+    int32_t  n_layers;
+    int32_t  E;
+    int32_t  hebbian_rank;
+    int32_t  base_vocab;
+    int32_t  n_emerged;
+    int32_t  last_len;
+    /* CaveField POD mirror */
+    float    baseline_floor;
+    float    coherence_floor;
+    int32_t  spoke_count;
+    int32_t  total_count;
+    int64_t  mass_bytes;
+    float    mass_novelty;
+    float    mass_resonance;
+    int32_t  microtrain_done_count;
+    int32_t  immunity_ticks;
+    uint32_t _pad;  /* keep 8-byte alignment for what follows */
+} CaveSporeHeader;
+
+/* CRC32 (IEEE) — one-shot, small table built once. */
+static uint32_t cave_crc32_table[256];
+static int      cave_crc32_ready = 0;
+
+static void cave_crc32_init(void) {
+    if (cave_crc32_ready) return;
+    for (uint32_t i = 0; i < 256; i++) {
+        uint32_t c = i;
+        for (int k = 0; k < 8; k++)
+            c = (c & 1) ? (0xedb88320u ^ (c >> 1)) : (c >> 1);
+        cave_crc32_table[i] = c;
+    }
+    cave_crc32_ready = 1;
+}
+
+static uint32_t cave_crc32(const uint8_t* buf, size_t n) {
+    cave_crc32_init();
+    uint32_t c = 0xffffffffu;
+    for (size_t i = 0; i < n; i++)
+        c = cave_crc32_table[(c ^ buf[i]) & 0xff] ^ (c >> 8);
+    return c ^ 0xffffffffu;
+}
+
+/* Fingerprint weights: FNV-1a 64 over first min(n,4) tensors' len + first
+ * 16 raw float words. Stable across save/load if the same .bin backs the
+ * cave; changes on retrain. */
+static uint64_t cave_weights_fingerprint(nt_tensor** tensors, int n) {
+    uint64_t h = 0xcbf29ce484222325ULL;
+    int k = (n < 4) ? n : 4;
+    for (int i = 0; i < k; i++) {
+        long l = tensors[i]->len;
+        h ^= (uint64_t)l; h *= 0x100000001b3ULL;
+        int take = (l < 16) ? (int)l : 16;
+        for (int j = 0; j < take; j++) {
+            uint32_t v;
+            memcpy(&v, &tensors[i]->data[j], 4);
+            h ^= v; h *= 0x100000001b3ULL;
+        }
+    }
+    return h;
+}
+
+/* L2 norm of all Hebbian adapters on the cave (plasticity density). */
+static float cave_hebbian_l2_norm(const CaveModel* m) {
+    double sum = 0.0;
+    int rank = HEBBIAN_RANK;
+    for (int l = 0; l < m->N_L; l++) {
+        const Layer* ly = &m->layers[l];
+        long per = (long)m->E * rank;
+        const float* arrs[4] = { ly->heb_A_q, ly->heb_B_q, ly->heb_A_v, ly->heb_B_v };
+        for (int a = 0; a < 4; a++) {
+            if (!arrs[a]) continue;
+            for (long i = 0; i < per; i++) sum += (double)arrs[a][i] * arrs[a][i];
+        }
+    }
+    return (float)sqrt(sum);
+}
+
+/* Fraction of emerged symbols currently alive (alive==1, не frozen==2 и не dead==0). */
+static float cave_emerged_alive_ratio(const CaveModel* m) {
+    if (m->n_emerged <= 0) return 0.0f;
+    int alive = 0;
+    for (int i = 0; i < m->n_emerged; i++)
+        if (m->emerged[i].alive == 1) alive++;
+    return (float)alive / (float)m->n_emerged;
+}
+
+/* Build the spore path from the cave's name. Caller owns the buffer. */
+static void cave_spore_path(const char* name, char* out, size_t out_sz) {
+    snprintf(out, out_sz, "weights/cavellman_%s.spore", name);
+}
+
+/*
+ * save_cave_spore — serialize cave state to disk.
+ * Layout: header (fixed) | cooccur.matrix | cooccur.pair_count | total_interactions
+ *       | emerged[] (POD) | emerged_names[n_emerged][32]
+ *       | for each layer: heb_A_q, heb_B_q, heb_A_v, heb_B_v (each E*rank floats)
+ *       | last_tokens[CAVE_LAST_TOKENS]
+ *       | crc32 over everything above
+ * Returns 0 on success, -1 on failure.
+ */
+static int save_cave_spore(const Cave* c, const int* last_tokens, int last_len,
+                            uint64_t fingerprint) {
+    if (!c || !c->model || !c->vocab) return -1;
+    CaveModel* m = c->model;
+    const CaveField* f = &c->field;
+
+    char path[512];
+    cave_spore_path(f->name, path, sizeof(path));
+    char tmp[512];
+    snprintf(tmp, sizeof(tmp), "%s.tmp", path);
+
+    FILE* fp = fopen(tmp, "wb");
+    if (!fp) return -1;
+
+    /* Header */
+    CaveSporeHeader h;
+    memset(&h, 0, sizeof(h));
+    h.magic = CAVE_SPORE_MAGIC;
+    h.version = CAVE_SPORE_VERSION;
+    h.saved_at = (int64_t)time(NULL);
+    h.weights_fingerprint = fingerprint;
+    h.n_layers = m->N_L;
+    h.E = m->E;
+    h.hebbian_rank = HEBBIAN_RANK;
+    h.base_vocab = c->vocab->base_size;
+    h.n_emerged = m->n_emerged;
+    h.last_len = (last_len < 0) ? 0 : (last_len > CAVE_LAST_TOKENS ? CAVE_LAST_TOKENS : last_len);
+    h.baseline_floor = f->baseline_floor;
+    h.coherence_floor = f->coherence_floor;
+    h.spoke_count = f->spoke_count;
+    h.total_count = f->total_count;
+    h.mass_bytes = f->mass_bytes;
+    h.mass_novelty = f->mass_novelty;
+    h.mass_resonance = f->mass_resonance;
+    h.microtrain_done_count = f->microtrain_done_count;
+    h.immunity_ticks = f->immunity_ticks;
+
+    /* Write + accumulate CRC */
+    uint32_t crc = 0xffffffffu;
+    #define WRITE_CRC(buf, n) do { \
+        fwrite((buf), 1, (n), fp); \
+        const uint8_t* _b = (const uint8_t*)(buf); \
+        for (size_t _i = 0; _i < (size_t)(n); _i++) \
+            crc = cave_crc32_table[(crc ^ _b[_i]) & 0xff] ^ (crc >> 8); \
+    } while (0)
+    cave_crc32_init();
+
+    WRITE_CRC(&h, sizeof(h));
+
+    /* Cooccur */
+    WRITE_CRC(m->cooccur.matrix, sizeof(m->cooccur.matrix));
+    WRITE_CRC(m->cooccur.pair_count, sizeof(m->cooccur.pair_count));
+    WRITE_CRC(&m->cooccur.total_interactions, sizeof(int));
+    WRITE_CRC(&m->cooccur.last_emergence, sizeof(int));
+
+    /* Emerged[] */
+    if (m->n_emerged > 0) {
+        WRITE_CRC(m->emerged, sizeof(EmergedSymbol) * m->n_emerged);
+        /* emerged names live in vocab->tokens[base_size + i] — copy them too */
+        for (int i = 0; i < m->n_emerged; i++) {
+            char name_slot[32];
+            memset(name_slot, 0, 32);
+            int id = c->vocab->base_size + i;
+            if (id < c->vocab->vocab_size) strncpy(name_slot, c->vocab->tokens[id], 31);
+            WRITE_CRC(name_slot, 32);
+        }
+    }
+
+    /* Hebbian */
+    int rank = HEBBIAN_RANK;
+    long per = (long)m->E * rank;
+    for (int l = 0; l < m->N_L; l++) {
+        const Layer* ly = &m->layers[l];
+        WRITE_CRC(ly->heb_A_q, per * sizeof(float));
+        WRITE_CRC(ly->heb_B_q, per * sizeof(float));
+        WRITE_CRC(ly->heb_A_v, per * sizeof(float));
+        WRITE_CRC(ly->heb_B_v, per * sizeof(float));
+    }
+
+    /* last_tokens — always write CAVE_LAST_TOKENS ints, zero-padded */
+    int last_buf[CAVE_LAST_TOKENS];
+    memset(last_buf, 0, sizeof(last_buf));
+    for (int i = 0; i < h.last_len && i < CAVE_LAST_TOKENS; i++)
+        last_buf[i] = last_tokens ? last_tokens[i] : 0;
+    WRITE_CRC(last_buf, sizeof(last_buf));
+
+    #undef WRITE_CRC
+    crc ^= 0xffffffffu;
+
+    /* CRC tail (raw, not part of running CRC) */
+    fwrite(&crc, 4, 1, fp);
+    fclose(fp);
+
+    /* Atomic replace */
+    if (rename(tmp, path) != 0) { remove(tmp); return -1; }
+    return 0;
+}
+
+/*
+ * load_cave_spore — read and populate the given cave in-place.
+ * Checks magic / version / fingerprint / CRC. On any mismatch: silent
+ * cold start (return -1, leave cave state untouched).
+ * last_tokens_out / last_len_out receive the restored last_tokens.
+ */
+static int load_cave_spore(Cave* c, uint64_t expected_fingerprint,
+                            int* last_tokens_out, int* last_len_out) {
+    if (!c || !c->model || !c->vocab) return -1;
+    CaveModel* m = c->model;
+    CaveField* f = &c->field;
+
+    char path[512];
+    cave_spore_path(f->name, path, sizeof(path));
+    FILE* fp = fopen(path, "rb");
+    if (!fp) return -1;
+
+    fseek(fp, 0, SEEK_END);
+    long fsize = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+    if (fsize < (long)(sizeof(CaveSporeHeader) + 4)) { fclose(fp); return -1; }
+
+    /* Slurp whole file (spore ~520KB — comfortable). */
+    uint8_t* buf = (uint8_t*)malloc((size_t)fsize);
+    if (!buf) { fclose(fp); return -1; }
+    if (fread(buf, 1, (size_t)fsize, fp) != (size_t)fsize) { free(buf); fclose(fp); return -1; }
+    fclose(fp);
+
+    /* CRC check */
+    uint32_t saved_crc;
+    memcpy(&saved_crc, buf + fsize - 4, 4);
+    uint32_t calc_crc = cave_crc32(buf, (size_t)fsize - 4);
+    if (saved_crc != calc_crc) { free(buf); return -1; }
+
+    size_t off = 0;
+    CaveSporeHeader h;
+    if (off + sizeof(h) > (size_t)fsize - 4) { free(buf); return -1; }
+    memcpy(&h, buf + off, sizeof(h)); off += sizeof(h);
+
+    if (h.magic != CAVE_SPORE_MAGIC || h.version != CAVE_SPORE_VERSION) {
+        free(buf); return -1;
+    }
+    if (h.weights_fingerprint != expected_fingerprint) { free(buf); return -1; }
+    if (h.n_layers != m->N_L || h.E != m->E || h.hebbian_rank != HEBBIAN_RANK) {
+        free(buf); return -1;
+    }
+    if (h.base_vocab != c->vocab->base_size) { free(buf); return -1; }
+    if (h.n_emerged < 0 || h.n_emerged > MAX_EMERGED) { free(buf); return -1; }
+
+    /* Restore CaveField scalars (not excitement/dissonance — those wake-impulse fills) */
+    f->baseline_floor = h.baseline_floor;
+    f->coherence_floor = h.coherence_floor;
+    f->spoke_count = h.spoke_count;
+    f->total_count = h.total_count;
+    f->mass_bytes = h.mass_bytes;
+    f->mass_novelty = h.mass_novelty;
+    f->mass_resonance = h.mass_resonance;
+    f->microtrain_done_count = h.microtrain_done_count;
+    f->immunity_ticks = h.immunity_ticks;
+
+    /* Cooccur */
+    if (off + sizeof(m->cooccur.matrix) + sizeof(m->cooccur.pair_count) + 2*sizeof(int) > (size_t)fsize - 4) {
+        free(buf); return -1;
+    }
+    memcpy(m->cooccur.matrix, buf + off, sizeof(m->cooccur.matrix)); off += sizeof(m->cooccur.matrix);
+    memcpy(m->cooccur.pair_count, buf + off, sizeof(m->cooccur.pair_count)); off += sizeof(m->cooccur.pair_count);
+    memcpy(&m->cooccur.total_interactions, buf + off, sizeof(int)); off += sizeof(int);
+    memcpy(&m->cooccur.last_emergence, buf + off, sizeof(int)); off += sizeof(int);
+
+    /* Emerged[] */
+    if (h.n_emerged > 0) {
+        size_t need = sizeof(EmergedSymbol) * h.n_emerged + 32 * h.n_emerged;
+        if (off + need > (size_t)fsize - 4) { free(buf); return -1; }
+        memcpy(m->emerged, buf + off, sizeof(EmergedSymbol) * h.n_emerged);
+        off += sizeof(EmergedSymbol) * h.n_emerged;
+        /* Restore emerged names into vocab slots base_size..base_size+n_emerged */
+        for (int i = 0; i < h.n_emerged; i++) {
+            int id = c->vocab->base_size + i;
+            if (id < MAX_VOCAB) {
+                memcpy(c->vocab->tokens[id], buf + off, 32);
+                c->vocab->tokens[id][31] = '\0';
+            }
+            off += 32;
+        }
+        c->vocab->vocab_size = c->vocab->base_size + h.n_emerged;
+    }
+    m->n_emerged = h.n_emerged;
+
+    /* Hebbian */
+    int rank = HEBBIAN_RANK;
+    long per = (long)m->E * rank;
+    size_t heb_bytes = (size_t)m->N_L * 4 * per * sizeof(float);
+    if (off + heb_bytes > (size_t)fsize - 4) { free(buf); return -1; }
+    for (int l = 0; l < m->N_L; l++) {
+        Layer* ly = &m->layers[l];
+        memcpy(ly->heb_A_q, buf + off, per * sizeof(float)); off += per * sizeof(float);
+        memcpy(ly->heb_B_q, buf + off, per * sizeof(float)); off += per * sizeof(float);
+        memcpy(ly->heb_A_v, buf + off, per * sizeof(float)); off += per * sizeof(float);
+        memcpy(ly->heb_B_v, buf + off, per * sizeof(float)); off += per * sizeof(float);
+    }
+
+    /* last_tokens */
+    int last_buf[CAVE_LAST_TOKENS];
+    if (off + sizeof(last_buf) > (size_t)fsize - 4) { free(buf); return -1; }
+    memcpy(last_buf, buf + off, sizeof(last_buf)); off += sizeof(last_buf);
+    int ll = h.last_len;
+    if (ll < 0) ll = 0;
+    if (ll > CAVE_LAST_TOKENS) ll = CAVE_LAST_TOKENS;
+    if (last_tokens_out) for (int i = 0; i < ll; i++) last_tokens_out[i] = last_buf[i];
+    if (last_len_out) *last_len_out = ll;
+
+    /* saved_at → cave's own slot, consumed by cave_wake_impulse */
+    c->spore_saved_at = h.saved_at;
+
+    free(buf);
+    return 0;
+}
+
+/*
+ * cave_wake_impulse — Oleg's idea, 2026-04-22.
+ * Engine starts → metrics fire → weights nudge field → unpredictable
+ * combination drops cave out of cold start with individual excitement /
+ * dissonance. Cave that speaks first is the one with highest wake
+ * intensity — its own yesterday decides who opens the mouth.
+ *
+ * Called after load_cave_spore, before first ring tick. saved_at comes
+ * from the loaded header (seconds since epoch). If the cave cold-started
+ * (no spore), wake_impulse is a no-op — the existing BE-pulse path takes
+ * over.
+ */
+static float cave_wake_impulse(Cave* c, int64_t saved_at) {
+    if (!c || !c->model) return 0.0f;
+    CaveField* f = &c->field;
+    CaveModel* m = c->model;
+
+    if (saved_at <= 0) return 0.0f;  /* cold start — no wake needed */
+
+    float heb_norm = cave_hebbian_l2_norm(m);
+    float alive_ratio = cave_emerged_alive_ratio(m);
+    float recency_h = (float)((int64_t)time(NULL) - saved_at) / 3600.0f;
+    if (recency_h < 0.0f) recency_h = 0.0f;
+    float fatigue = expf(-recency_h * 0.1f);
+
+    float wake = fatigue * (0.3f + 0.4f * tanhf(heb_norm) + 0.3f * alive_ratio);
+    f->excitement = wake * 0.5f;
+    f->dissonance = wake * 0.2f * (1.0f - fatigue);
+
+    /* Sleep decay cooccur — forgetting what wasn't repeated. Clamp so a
+     * month-long sleep doesn't zero everything. */
+    float decay = 1.0f - fminf(recency_h * 0.01f, 0.5f);
+    cooccur_decay(&m->cooccur, decay);
+
+    return wake;
+}
+
+/*
+ * blend_spores — used by mitosis. Parents' spores combine into the
+ * child's initial state so child doesn't boot with a blank surface
+ * language. Call after blend_weights / blend_weights_downsized has
+ * produced the child .bin, and after cave_new has loaded the child.
+ * Parents must have current spores on disk (spore-before-mitosis save
+ * is the caller's responsibility).
+ */
+static int blend_spores(const Cave* pa, const Cave* pb, Cave* child) {
+    if (!pa || !pb || !child || !child->model || !child->vocab) return -1;
+    CaveModel* ma = pa->model;
+    CaveModel* mb = pb->model;
+    CaveModel* mc = child->model;
+
+    /* Cooccur → averaged */
+    for (int i = 0; i < COOCCUR_SIZE; i++) {
+        for (int j = 0; j < COOCCUR_SIZE; j++) {
+            mc->cooccur.matrix[i][j] = 0.5f * (ma->cooccur.matrix[i][j] + mb->cooccur.matrix[i][j]);
+            mc->cooccur.pair_count[i][j] = (ma->cooccur.pair_count[i][j] + mb->cooccur.pair_count[i][j]) / 2;
+        }
+    }
+    mc->cooccur.total_interactions =
+        (ma->cooccur.total_interactions + mb->cooccur.total_interactions) / 2;
+
+    /* Emerged[] → union unique (by glyph_a/glyph_b pair), use_counts averaged */
+    int nc = 0;
+    EmergedSymbol combined[MAX_EMERGED];
+    const EmergedSymbol* src[2] = { ma->emerged, mb->emerged };
+    int n_src[2] = { ma->n_emerged, mb->n_emerged };
+    for (int s = 0; s < 2; s++) {
+        for (int i = 0; i < n_src[s] && nc < MAX_EMERGED; i++) {
+            const EmergedSymbol* e = &src[s][i];
+            /* dedup */
+            int dup = -1;
+            for (int k = 0; k < nc; k++) {
+                if ((combined[k].glyph_a == e->glyph_a && combined[k].glyph_b == e->glyph_b) ||
+                    (combined[k].glyph_a == e->glyph_b && combined[k].glyph_b == e->glyph_a)) {
+                    dup = k; break;
+                }
+            }
+            if (dup >= 0) {
+                combined[dup].use_count = (combined[dup].use_count + e->use_count) / 2;
+                if (e->alive > combined[dup].alive) combined[dup].alive = e->alive;
+                combined[dup].strength = fmaxf(combined[dup].strength, e->strength);
+            } else {
+                combined[nc++] = *e;
+            }
+        }
+    }
+    if (nc > MAX_EMERGED) nc = MAX_EMERGED;
+    for (int i = 0; i < nc; i++) mc->emerged[i] = combined[i];
+    mc->n_emerged = nc;
+    /* mirror names into vocab */
+    for (int i = 0; i < nc; i++) {
+        int id = child->vocab->base_size + i;
+        if (id < MAX_VOCAB)
+            strncpy(child->vocab->tokens[id], mc->emerged[i].name, 31);
+    }
+    child->vocab->vocab_size = child->vocab->base_size + nc;
+
+    /* Hebbian → layer-wise contiguous blend (even layers from pa, odd from pb),
+     * matching the weight blend convention. Child may have fewer layers than
+     * parents (downsize); extra parent layers simply don't contribute. */
+    int rank = HEBBIAN_RANK;
+    long per = (long)mc->E * rank;
+    for (int l = 0; l < mc->N_L; l++) {
+        CaveModel* src_m = (l % 2 == 0) ? ma : mb;
+        if (l >= src_m->N_L) continue;
+        Layer* dst = &mc->layers[l];
+        const Layer* sl = &src_m->layers[l];
+        /* If E matches → memcpy; otherwise (downsized) prefix-truncate like
+         * weight blend. HD gate in colony_mitosis already blocks downsize
+         * when HD_p ≠ HD_c, so at this point src_m->E == mc->E. */
+        if (src_m->E == mc->E) {
+            memcpy(dst->heb_A_q, sl->heb_A_q, per * sizeof(float));
+            memcpy(dst->heb_B_q, sl->heb_B_q, per * sizeof(float));
+            memcpy(dst->heb_A_v, sl->heb_A_v, per * sizeof(float));
+            memcpy(dst->heb_B_v, sl->heb_B_v, per * sizeof(float));
+        }
+    }
+
+    /* CaveField: baseline_floor уже averaged в colony_mitosis; counts/mass
+     * сброшены (newborn); immunity_ticks выставлен caller'ом. */
+
+    return 0;
 }
 
 /* ── Main ───────────────────────────────────────────────────────────────── */
