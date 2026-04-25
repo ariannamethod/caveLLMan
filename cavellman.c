@@ -28,6 +28,10 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <signal.h>
+#ifdef __linux__
+#include <execinfo.h>
+#endif
 #include <sys/wait.h>
 
 /* ── Limits ─────────────────────────────────────────────────────────────── */
@@ -2700,13 +2704,11 @@ static void colony_main_async(float temp, float top_p, const char* preset_name) 
         g_cave_thread_started[ci] = 1;
     }
 
-    /* Trinity: Molly's horizon-thread (her own rhythm, writes to dna/ pool).
-     * DIAG: temporarily disabled to confirm whether the Linux Trinity 30-65s
-     * silent crash is in Molly's thread or in the cave/orchestrator path. */
+    /* Trinity: Molly's horizon-thread (her own rhythm, writes to dna/ pool). */
     if (g_trinity_mode && g_molly.model) {
-        // pthread_create(&g_molly.thread, NULL, molly_thread_main, NULL);
-        // g_molly.started = 1;
-        printf("[trinity] Molly thread DIAG-DISABLED (model loaded but not running)\n");
+        pthread_create(&g_molly.thread, NULL, molly_thread_main, NULL);
+        g_molly.started = 1;
+        printf("[trinity] Molly thread on horizon — feeding dna/output/molly/\n");
     }
 
     /* Orchestrator: pulse / mitosis / save / spawn-thread-for-new-cave. */
@@ -3242,10 +3244,40 @@ static int blend_spores(const Cave* pa, const Cave* pb, Cave* child) {
 
 /* ── Main ───────────────────────────────────────────────────────────────── */
 
+/* Linux-only crash trap: when the kernel sends SIGSEGV/SIGABRT/SIGBUS/SIGFPE,
+ * dump a backtrace to stderr before exiting. Without this Railway logs only
+ * show silent container death, which is what blocked Trinity diagnosis. */
+#ifdef __linux__
+static void crash_trap(int sig) {
+    void* frames[32];
+    int n = backtrace(frames, 32);
+    fprintf(stderr, "\n*** SIGNAL %d caught (tid=%lu) — backtrace:\n",
+            sig, (unsigned long)pthread_self());
+    backtrace_symbols_fd(frames, n, 2);
+    fflush(stderr);
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+static void install_crash_trap(void) {
+    struct sigaction sa = {0};
+    sa.sa_handler = crash_trap;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESETHAND | SA_NODEFER;
+    sigaction(SIGSEGV, &sa, NULL);
+    sigaction(SIGABRT, &sa, NULL);
+    sigaction(SIGBUS,  &sa, NULL);
+    sigaction(SIGFPE,  &sa, NULL);
+}
+#else
+static void install_crash_trap(void) {}
+#endif
+
 int main(int argc, char** argv) {
     /* Keep stdout unbuffered even when redirected through a pipe —
      * otherwise dual-mode dialogue disappears into libc buffers until quit. */
     setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+    install_crash_trap();
 
     /* Dual is the only mode. Single-dialogue was deprecated — the human is
      * no longer the center of the ring. Default weights are the asymmetric

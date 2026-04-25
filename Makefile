@@ -27,6 +27,9 @@ endif
 ifeq ($(UNAME), Linux)
   BLAS_FLAGS = -DUSE_BLAS -lopenblas
   BLAS_NAME = OpenBLAS
+  # -rdynamic + -g make backtrace_symbols print function names from the crash
+  # trap installed in main(). -O2 stays — the names just resolve.
+  CFLAGS += -g -rdynamic
 endif
 
 .PHONY: all cavellman cavellman-cpu train train_cavellman train_diffusion weights clean help
