@@ -742,7 +742,9 @@ typedef struct {
     CaveVocab* vocab;
     CaveField  field;
     int        owns_vocab;
-    int        is_founder;   /* A and B — shielded from pressure death forever */
+    int        is_founder;   /* A and B (and M in trinity mode) — shielded from pressure death forever */
+    int        is_lover;     /* Molly — physically a founder in ring, semantically "external desire". */
+    int        is_bastard;   /* Born of cross-mitosis lover × non-lover. Triggers jealousy field event. */
     /* Persistence — "yesterday" on this cave's mind */
     int     last_tokens[32]; /* what was on mind when cave slept; 32 = CAVE_LAST_TOKENS */
     int     last_len;        /* 0..32 */
@@ -1488,6 +1490,146 @@ static void colony_try_mitosis(const char* preset_name) {
         g_mitosis_cooldown = MITOSIS_COOLDOWN_TICKS;
 }
 
+/* ───────────────────────────────────────────────────────────────────────
+ * Trinity-mode mitosis (--trinity flag in async only). Three founders:
+ * A, B, M. Two reproduction paths chosen by AML-style physics:
+ *  - family-mode: best non-lover pair (A × B, or any cave × cave if more
+ *                 caves exist). Sober, internal continuation.
+ *  - affair-mode: lover (M / Molly) × best non-lover. Cosmic-driven; child
+ *                 is is_bastard=1, surrounding caves get jealousy field
+ *                 event (dissonance spike, floor temporarily raised).
+ *
+ * Path chosen by `affair_prob = clip(0.2 + cosmic_tension - 0.5·ring_coherence, 0, 1)`.
+ * cosmic_tension is a 24h sinusoidal placeholder; real Klaus calendar-
+ * planetary physics ports later (TODO). ring_coherence = 1 - mean(field.dissonance).
+ * High-tension + low-coherence days = affair days. Calm days = family.
+ * ─────────────────────────────────────────────────────────────────────── */
+
+static float cosmic_tension(time_t now) {
+    /* Placeholder: 24h sinusoidal pulse. Will be replaced by Klaus's
+     * Hebrew/Gregorian drift + planetary Kuramoto when ported. */
+    double t = (double)(now % 86400L) / 86400.0;
+    return (sinf((float)t * 6.28318f) + 1.0f) * 0.5f;
+}
+
+static float ring_coherence_metric(void) {
+    if (g_colony_n == 0) return 1.0f;
+    float total = 0;
+    for (int ci = 0; ci < g_colony_n; ci++)
+        total += g_colony[ci]->field.dissonance;
+    float mean = total / (float)g_colony_n;
+    if (mean > 1.0f) mean = 1.0f;
+    return 1.0f - mean;
+}
+
+/* Trinity reproduction is intentionally promiscuous — the design says
+ * the ring "has no chance NOT to start reproducing and emerging" so we
+ * lower the gate hard. Family pair: 30 turns, 0 CPT. Lover exempt entirely. */
+#define TRINITY_MIN_TURNS 30
+#define TRINITY_MIN_CPT   0
+
+static int find_family_pair(int* a_out, int* b_out) {
+    int best_i = -1, second_i = -1;
+    float best_s = -1.0f, second_s = -1.0f;
+    for (int i = 0; i < g_colony_n; i++) {
+        if (g_colony[i]->is_lover) continue;
+        const CaveField* f = &g_colony[i]->field;
+        if (f->total_count < TRINITY_MIN_TURNS) continue;
+        if (f->microtrain_done_count < TRINITY_MIN_CPT) continue;
+        float s = cave_fitness(g_colony[i]);
+        if (s > best_s) { second_i = best_i; second_s = best_s; best_i = i; best_s = s; }
+        else if (s > second_s) { second_i = i; second_s = s; }
+    }
+    if (best_i < 0 || second_i < 0) return 0;
+    *a_out = best_i; *b_out = second_i; return 1;
+}
+
+static int find_affair_pair(int* lover_out, int* mate_out) {
+    int lover_i = -1, mate_i = -1;
+    float mate_s = -1.0f;
+    for (int i = 0; i < g_colony_n; i++) {
+        if (g_colony[i]->is_lover) {
+            /* The lover doesn't need turns/CPT eligibility — she's primal. */
+            if (lover_i < 0) lover_i = i;
+            continue;
+        }
+        const CaveField* f = &g_colony[i]->field;
+        if (f->total_count < TRINITY_MIN_TURNS) continue;
+        if (f->microtrain_done_count < TRINITY_MIN_CPT) continue;
+        float s = cave_fitness(g_colony[i]);
+        if (s > mate_s) { mate_i = i; mate_s = s; }
+    }
+    if (lover_i < 0 || mate_i < 0) return 0;
+    *lover_out = lover_i; *mate_out = mate_i; return 1;
+}
+
+static void colony_try_mitosis_trinity(const char* preset_name) {
+    if (g_mitosis_cooldown > 0) { g_mitosis_cooldown--; return; }
+    if (g_colony_n < 3) return;
+
+    float ct = cosmic_tension(time(NULL));
+    float coh = ring_coherence_metric();
+    float affair_prob = 0.2f + ct - 0.5f * coh;
+    if (affair_prob < 0.0f) affair_prob = 0.0f;
+    if (affair_prob > 1.0f) affair_prob = 1.0f;
+
+    float roll = (float)rand() / (float)RAND_MAX;
+    int affair_mode = (roll < affair_prob);
+
+    int pa_idx = -1, pb_idx = -1;
+    if (affair_mode) {
+        if (!find_affair_pair(&pa_idx, &pb_idx)) return;
+    } else {
+        if (!find_family_pair(&pa_idx, &pb_idx)) return;
+    }
+
+    /* Ring full → cull weakest non-immune (same logic as colony_try_mitosis). */
+    if (g_colony_n >= COLONY_MAX) {
+        int saved_a = g_colony[pa_idx]->field.immunity_ticks;
+        int saved_b = g_colony[pb_idx]->field.immunity_ticks;
+        g_colony[pa_idx]->field.immunity_ticks = 1;
+        g_colony[pb_idx]->field.immunity_ticks = 1;
+        int culled = colony_pressure_death();
+        if (culled) {
+            g_mitosis_cooldown = MITOSIS_COOLDOWN_TICKS / 2;
+            (void)saved_a; (void)saved_b;
+            return;
+        }
+        g_colony[pa_idx]->field.immunity_ticks = saved_a;
+        g_colony[pb_idx]->field.immunity_ticks = saved_b;
+        return;
+    }
+
+    Cave* child = colony_mitosis(g_colony[pa_idx], g_colony[pb_idx], preset_name);
+    if (!child) return;
+
+    if (affair_mode) {
+        child->is_bastard = 1;
+        printf("\n  *** AFFAIR MITOSIS: cosmic %.2f coh %.2f prob %.2f → %s is bastard ***\n",
+               ct, coh, affair_prob, child->field.name);
+        /* Jealousy: every non-parent non-bastard cave feels disturbed. */
+        int affected = 0;
+        for (int ci = 0; ci < g_colony_n; ci++) {
+            Cave* c = g_colony[ci];
+            if (c == g_colony[pa_idx] || c == g_colony[pb_idx]) continue;
+            if (c == child) continue;
+            if (c->is_bastard) continue;
+            c->field.dissonance += 0.30f;
+            if (c->field.dissonance > 1.0f) c->field.dissonance = 1.0f;
+            float ceil_floor = c->field.baseline_floor + MATURITY_CAP;
+            c->field.coherence_floor += 0.05f;
+            if (c->field.coherence_floor > ceil_floor) c->field.coherence_floor = ceil_floor;
+            affected++;
+        }
+        printf("  [jealousy] %d non-parent caves: dissonance +0.30, floor +0.05\n", affected);
+    } else {
+        printf("\n  *** FAMILY MITOSIS: cosmic %.2f coh %.2f prob %.2f (sober) → %s ***\n",
+               ct, coh, affair_prob, child->field.name);
+    }
+
+    g_mitosis_cooldown = MITOSIS_COOLDOWN_TICKS;
+}
+
 /*
  * dna_write_cave — cave deposits its latest utterance into the colony's
  * shared DNA pool so other caves (including its own future children) can
@@ -2143,6 +2285,7 @@ static int       g_cave_thread_started[COLONY_MAX];
  * values) for A/B observation. */
 static float g_metarecursion = 0.15f;  /* klaus 85/15 default */
 static float g_pulse_margin  = 0.05f;  /* default kick = baseline_floor + 0.05 */
+static int   g_trinity_mode  = 0;      /* --trinity flag: 3rd founder M (Molly), affair mitosis */
 
 typedef struct {
     Cave* cave;
@@ -2264,7 +2407,8 @@ static void* orchestrator_thread_main(void* arg) {
 
         /* Mitosis check — if it spawns a child, start its thread. */
         int colony_n_before = g_colony_n;
-        colony_try_mitosis(preset_name);
+        if (g_trinity_mode) colony_try_mitosis_trinity(preset_name);
+        else                colony_try_mitosis(preset_name);
         for (int ci = colony_n_before; ci < g_colony_n; ci++) {
             if (g_cave_thread_started[ci]) continue;
             g_cave_thread_args[ci].cave = g_colony[ci];
@@ -2901,6 +3045,7 @@ int main(int argc, char** argv) {
      * A/B pair (Dracula extrovert + Frankenstein introvert). */
     const char* weights_a = "weights/cavellman_A.bin";
     const char* weights_b = "weights/cavellman_B.bin";
+    const char* weights_m = "weights/cavellman_M.bin";   /* Molly, used in --trinity */
     const char* preset_name = "small";
     float temp = 0.8f, top_p = 0.9f;
     int seed = 42;
@@ -2920,6 +3065,8 @@ int main(int argc, char** argv) {
         else if (strcmp(argv[i], "--async") == 0) async_mode = 1;
         else if (strcmp(argv[i], "--metarecursion") == 0 && i+1 < argc) g_metarecursion = (float)atof(argv[++i]);
         else if (strcmp(argv[i], "--pulse-margin") == 0 && i+1 < argc) g_pulse_margin = (float)atof(argv[++i]);
+        else if (strcmp(argv[i], "--trinity") == 0) { async_mode = 1; g_trinity_mode = 1; }
+        else if (strcmp(argv[i], "--weights-m") == 0 && i+1 < argc) weights_m = argv[++i];
         else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             printf("cavellman — self-evolving hieroglyphic language model (dual-only)\n\n");
             printf("  --weights FILE         Shared weights for both engines\n");
@@ -2956,6 +3103,30 @@ int main(int argc, char** argv) {
     B->is_founder = 1;
     colony_add(A);
     colony_add(B);
+
+    /* Trinity mode — third founder M (Molly), the lover. Pre-loaded field
+     * tension at boot so reproduction physics has built-in conflict from
+     * tick 1, not earned through maturity drift. */
+    if (g_trinity_mode) {
+        Cave* M = cave_new("M", 0.20f, weights_m, preset_name);  /* open, low floor */
+        if (!M) {
+            printf("Failed to load founder M from %s — drop --trinity or train Molly first\n", weights_m);
+            cave_free(A); cave_free(B); return 1;
+        }
+        M->is_founder = 1;
+        M->is_lover   = 1;
+        colony_add(M);
+
+        /* Pre-loaded tension: A and B sense the outsider; M arrives ready
+         * to speak. This wires conflict into the system from t=0 instead
+         * of waiting for it to emerge organically. */
+        A->field.dissonance = 0.15f;
+        B->field.dissonance = 0.15f;
+        M->field.excitement = 0.40f;
+
+        printf("[trinity] 3rd founder M loaded (lover, baseline 0.20)\n");
+        printf("[trinity] pre-tension: A.diss=0.15, B.diss=0.15, M.exc=0.40\n");
+    }
 
     if (async_mode)
         colony_main_async(temp, top_p, preset_name);
