@@ -1493,14 +1493,33 @@ static void colony_try_mitosis(const char* preset_name) {
         g_mitosis_cooldown = MITOSIS_COOLDOWN_TICKS;
 }
 
+/* MollyState — Molly lives outside the colony as a horizon-goroutine.
+ * Her own pthread runs molly_thread_main, generating utterances and
+ * writing them to dna/output/molly/ where the existing learner picks
+ * them up and feeds every cave passively. Affair mitosis blends a
+ * cave's weights with g_molly.weights_path directly. */
+typedef struct {
+    CaveModel* model;
+    CaveVocab* vocab;
+    char       weights_path[512];
+    int        last_tokens[32];
+    int        last_len;
+    pthread_t  thread;
+    int        started;
+    int        utter_count;
+} MollyState;
+
+static MollyState g_molly = {0};
+static pthread_mutex_t g_molly_lock = PTHREAD_MUTEX_INITIALIZER;
+
 /* ───────────────────────────────────────────────────────────────────────
- * Trinity-mode mitosis (--trinity flag in async only). Three founders:
- * A, B, M. Two reproduction paths chosen by AML-style physics:
- *  - family-mode: best non-lover pair (A × B, or any cave × cave if more
- *                 caves exist). Sober, internal continuation.
- *  - affair-mode: lover (M / Molly) × best non-lover. Cosmic-driven; child
- *                 is is_bastard=1, surrounding caves get jealousy field
- *                 event (dissonance spike, floor temporarily raised).
+ * Trinity-mode mitosis (--trinity flag in async only). Two reproduction
+ * paths chosen by AML-style physics:
+ *  - family-mode: best non-bastard pair from g_colony[]. Sober.
+ *  - affair-mode: a chosen cave × g_molly (Molly is on the horizon, not
+ *                 in the colony). Cosmic-driven; child is is_bastard=1,
+ *                 surrounding caves get jealousy field event (dissonance
+ *                 spike, floor temporarily raised).
  *
  * Path chosen by `affair_prob = clip(0.2 + cosmic_tension - 0.5·ring_coherence, 0, 1)`.
  * cosmic_tension is a 24h sinusoidal placeholder; real Klaus calendar-
@@ -1547,28 +1566,80 @@ static int find_family_pair(int* a_out, int* b_out) {
     *a_out = best_i; *b_out = second_i; return 1;
 }
 
-static int find_affair_pair(int* lover_out, int* mate_out) {
-    int lover_i = -1, mate_i = -1;
+/* For affair mitosis we only need the cave that will mate with Molly —
+ * Molly herself isn't in g_colony[], her model lives in g_molly.model.
+ * Returns the cave colony index of the chosen mate, or -1. */
+static int find_affair_mate(void) {
+    int mate_i = -1;
     float mate_s = -1.0f;
     for (int i = 0; i < g_colony_n; i++) {
-        if (g_colony[i]->is_lover) {
-            /* The lover doesn't need turns/CPT eligibility — she's primal. */
-            if (lover_i < 0) lover_i = i;
-            continue;
-        }
         const CaveField* f = &g_colony[i]->field;
         if (f->total_count < TRINITY_MIN_TURNS) continue;
         if (f->microtrain_done_count < TRINITY_MIN_CPT) continue;
         float s = cave_fitness(g_colony[i]);
         if (s > mate_s) { mate_i = i; mate_s = s; }
     }
-    if (lover_i < 0 || mate_i < 0) return 0;
-    *lover_out = lover_i; *mate_out = mate_i; return 1;
+    return mate_i;
+}
+
+/* Cave-with-Molly affair mitosis: blend mate's weights with g_molly's weights
+ * directly (Molly is on the horizon, not in g_colony[]). Returns the bastard
+ * child or NULL on failure. Caller handles cooldown + jealousy event. */
+static Cave* colony_affair_with_molly(int mate_idx, const char* preset_name) {
+    if (mate_idx < 0 || mate_idx >= g_colony_n) return NULL;
+    if (g_colony_n >= COLONY_MAX) return NULL;
+    if (!g_molly.model) return NULL;
+
+    Cave* pa = g_colony[mate_idx];
+
+    char child_name[16];
+    snprintf(child_name, sizeof(child_name), "C%d", g_children_born + 1);
+
+    char child_w[512], child_v[512], child_j[512];
+    char parent_v[512], parent_j[512];
+    snprintf(child_w, sizeof(child_w), "weights/cavellman_child_%s.bin", child_name);
+    snprintf(child_v, sizeof(child_v), "%s.vocab", child_w);
+    snprintf(child_j, sizeof(child_j), "%s.json",  child_w);
+    snprintf(parent_v, sizeof(parent_v), "%s.vocab", pa->field.weights_path);
+    snprintf(parent_j, sizeof(parent_j), "%s.json",  pa->field.weights_path);
+
+    /* Same-size blend with Molly's stable on-disk weights. */
+    if (blend_weights(pa->field.weights_path, g_molly.weights_path, child_w) != 0) {
+        printf("  [affair] blend_weights failed for %s × Molly → %s\n",
+               pa->field.name, child_w);
+        return NULL;
+    }
+    copy_file(parent_v, child_v);
+    copy_file(parent_j, child_j);
+
+    /* Bastard's baseline floor — middle between mate and Molly (0.20). */
+    float child_baseline = 0.5f * (pa->field.baseline_floor + 0.20f);
+
+    char* permanent_name = strdup(child_name);
+    Cave* child = cave_new(permanent_name, child_baseline, child_w, preset_name);
+    if (!child) {
+        free(permanent_name);
+        printf("  [affair] cave_new failed for child %s\n", child_name);
+        return NULL;
+    }
+
+    int n = pa->last_len;
+    if (n > 32) n = 32;
+    memcpy(child->last_tokens, pa->last_tokens, (size_t)n * sizeof(int));
+    child->last_len = n;
+    child->spore_saved_at = (int64_t)time(NULL);
+
+    child->field.immunity_ticks = NEWBORN_IMMUNITY_TICKS;
+    child->is_bastard = 1;
+
+    colony_add(child);
+    g_children_born++;
+    return child;
 }
 
 static void colony_try_mitosis_trinity(const char* preset_name) {
     if (g_mitosis_cooldown > 0) { g_mitosis_cooldown--; return; }
-    if (g_colony_n < 3) return;
+    if (g_colony_n < 2) return;
 
     float ct = cosmic_tension(time(NULL));
     float coh = ring_coherence_metric();
@@ -1577,45 +1648,40 @@ static void colony_try_mitosis_trinity(const char* preset_name) {
     if (affair_prob > 1.0f) affair_prob = 1.0f;
 
     float roll = (float)rand() / (float)RAND_MAX;
-    int affair_mode = (roll < affair_prob);
+    int affair_mode = (roll < affair_prob) && (g_molly.model != NULL);
 
+    Cave* child = NULL;
     int pa_idx = -1, pb_idx = -1;
-    if (affair_mode) {
-        if (!find_affair_pair(&pa_idx, &pb_idx)) return;
-    } else {
-        if (!find_family_pair(&pa_idx, &pb_idx)) return;
-    }
 
-    /* Ring full → cull weakest non-immune (same logic as colony_try_mitosis). */
-    if (g_colony_n >= COLONY_MAX) {
-        int saved_a = g_colony[pa_idx]->field.immunity_ticks;
-        int saved_b = g_colony[pb_idx]->field.immunity_ticks;
-        g_colony[pa_idx]->field.immunity_ticks = 1;
-        g_colony[pb_idx]->field.immunity_ticks = 1;
-        int culled = colony_pressure_death();
-        if (culled) {
-            g_mitosis_cooldown = MITOSIS_COOLDOWN_TICKS / 2;
-            (void)saved_a; (void)saved_b;
+    if (affair_mode) {
+        pa_idx = find_affair_mate();
+        if (pa_idx < 0) return;
+
+        /* Ring full → cull weakest non-immune. */
+        if (g_colony_n >= COLONY_MAX) {
+            int saved_a = g_colony[pa_idx]->field.immunity_ticks;
+            g_colony[pa_idx]->field.immunity_ticks = 1;
+            int culled = colony_pressure_death();
+            if (culled) {
+                g_mitosis_cooldown = MITOSIS_COOLDOWN_TICKS / 2;
+                (void)saved_a;
+                return;
+            }
+            g_colony[pa_idx]->field.immunity_ticks = saved_a;
             return;
         }
-        g_colony[pa_idx]->field.immunity_ticks = saved_a;
-        g_colony[pb_idx]->field.immunity_ticks = saved_b;
-        return;
-    }
 
-    Cave* child = colony_mitosis(g_colony[pa_idx], g_colony[pb_idx], preset_name);
-    if (!child) return;
+        child = colony_affair_with_molly(pa_idx, preset_name);
+        if (!child) return;
 
-    if (affair_mode) {
-        child->is_bastard = 1;
-        printf("\n  *** AFFAIR MITOSIS: cosmic %.2f coh %.2f prob %.2f → %s is bastard ***\n",
-               ct, coh, affair_prob, child->field.name);
-        /* Jealousy: every non-parent non-bastard cave feels disturbed. */
+        printf("\n  *** AFFAIR MITOSIS: %s × Molly → %s (cosmic %.2f coh %.2f prob %.2f) ***\n",
+               g_colony[pa_idx]->field.name, child->field.name, ct, coh, affair_prob);
+
+        /* Jealousy: non-parent non-bastard caves feel disturbed. */
         int affected = 0;
         for (int ci = 0; ci < g_colony_n; ci++) {
             Cave* c = g_colony[ci];
-            if (c == g_colony[pa_idx] || c == g_colony[pb_idx]) continue;
-            if (c == child) continue;
+            if (c == g_colony[pa_idx] || c == child) continue;
             if (c->is_bastard) continue;
             c->field.dissonance += 0.30f;
             if (c->field.dissonance > 1.0f) c->field.dissonance = 1.0f;
@@ -1624,10 +1690,31 @@ static void colony_try_mitosis_trinity(const char* preset_name) {
             if (c->field.coherence_floor > ceil_floor) c->field.coherence_floor = ceil_floor;
             affected++;
         }
-        printf("  [jealousy] %d non-parent caves: dissonance +0.30, floor +0.05\n", affected);
+        printf("  [jealousy] %d cave(s): dissonance +0.30, floor +0.05\n", affected);
     } else {
-        printf("\n  *** FAMILY MITOSIS: cosmic %.2f coh %.2f prob %.2f (sober) → %s ***\n",
-               ct, coh, affair_prob, child->field.name);
+        if (!find_family_pair(&pa_idx, &pb_idx)) return;
+
+        if (g_colony_n >= COLONY_MAX) {
+            int saved_a = g_colony[pa_idx]->field.immunity_ticks;
+            int saved_b = g_colony[pb_idx]->field.immunity_ticks;
+            g_colony[pa_idx]->field.immunity_ticks = 1;
+            g_colony[pb_idx]->field.immunity_ticks = 1;
+            int culled = colony_pressure_death();
+            if (culled) {
+                g_mitosis_cooldown = MITOSIS_COOLDOWN_TICKS / 2;
+                (void)saved_a; (void)saved_b;
+                return;
+            }
+            g_colony[pa_idx]->field.immunity_ticks = saved_a;
+            g_colony[pb_idx]->field.immunity_ticks = saved_b;
+            return;
+        }
+
+        child = colony_mitosis(g_colony[pa_idx], g_colony[pb_idx], preset_name);
+        if (!child) return;
+        printf("\n  *** FAMILY MITOSIS: %s × %s → %s (cosmic %.2f coh %.2f prob %.2f sober) ***\n",
+               g_colony[pa_idx]->field.name, g_colony[pb_idx]->field.name,
+               child->field.name, ct, coh, affair_prob);
     }
 
     g_mitosis_cooldown = MITOSIS_COOLDOWN_TICKS;
@@ -2288,7 +2375,10 @@ static int       g_cave_thread_started[COLONY_MAX];
  * values) for A/B observation. */
 static float g_metarecursion = 0.15f;  /* klaus 85/15 default */
 static float g_pulse_margin  = 0.05f;  /* default kick = baseline_floor + 0.05 */
-static int   g_trinity_mode  = 0;      /* --trinity flag: 3rd founder M (Molly), affair mitosis */
+static int   g_trinity_mode  = 0;      /* --trinity flag: Molly as horizon-goroutine + affair mitosis */
+
+/* MollyState + g_molly are declared earlier (before trinity-mitosis
+ * helpers that reference them). See above. */
 
 typedef struct {
     Cave* cave;
@@ -2297,6 +2387,86 @@ typedef struct {
 } CaveThreadArg;
 
 static CaveThreadArg g_cave_thread_args[COLONY_MAX];
+
+/* Molly's thread — she lives on the horizon, not in the colony. Her tick
+ * rate is independent of cave tick. Each cycle she picks a short prompt
+ * from her own last_tokens (or a random base glyph), generates a fragment,
+ * writes it to dna/output/molly_<ts>.txt so the existing learner ingests
+ * it and feeds every cave passively. She never takes the g_learner.lock
+ * for inference — her own pthread mutex on her model state is enough.
+ * Caves never see her in g_colony[]; she influences them only through
+ * the field. */
+#define MOLLY_TICK_US (DUAL_TICK_US * 3)   /* slower than cave threads — she breathes deeper */
+#define MOLLY_DNA_DIR "dna/output/molly"
+/* g_molly_lock declared earlier with MollyState. */
+
+static void* molly_thread_main(void* arg) {
+    (void)arg;
+    /* Initial seed for prompt — a base BE glyph, like the bootstrap. */
+    int be_id = semtok_find_glyph("BE");
+    if (g_molly.last_len == 0 && be_id >= 0) {
+        g_molly.last_tokens[0] = be_id;
+        g_molly.last_len = 1;
+    }
+
+    mkdir("dna", 0755);
+    mkdir("dna/output", 0755);
+    mkdir(MOLLY_DNA_DIR, 0755);
+
+    while (g_async_running) {
+        int prompt[MAX_SEQ];
+        int prompt_len;
+
+        pthread_mutex_lock(&g_molly_lock);
+        prompt_len = g_molly.last_len;
+        if (prompt_len > MAX_SEQ) prompt_len = MAX_SEQ;
+        memcpy(prompt, g_molly.last_tokens, (size_t)prompt_len * sizeof(int));
+        pthread_mutex_unlock(&g_molly_lock);
+
+        /* Forward pass on Molly's own model. Holds her own lock so caves
+         * doing affair mitosis can read her state safely. */
+        pthread_mutex_lock(&g_molly_lock);
+        int gen[MAX_SEQ];
+        int gn = dual_generate(g_molly.model, g_molly.vocab,
+                               prompt, prompt_len,
+                               DUAL_MAX_GEN, 0.8f, 0.9f, gen, MAX_SEQ);
+        pthread_mutex_unlock(&g_molly_lock);
+
+        if (gn > 0) {
+            /* Print her voice to the log so the dashboard sees her too. */
+            print_glyphs("M", g_molly.vocab, gen, gn);
+
+            /* Write to dna/output/molly/ so the learner picks her up
+             * naturally and feeds every cave through the existing
+             * passive-reading path — no changes to cave_thread_main needed. */
+            char fname[1024];
+            snprintf(fname, sizeof(fname), "%s/molly_%ld_%d.txt",
+                     MOLLY_DNA_DIR, (long)time(NULL), rand());
+            FILE* f = fopen(fname, "w");
+            if (f) {
+                for (int i = 0; i < gn; i++) {
+                    int t = gen[i];
+                    if (t < 0 || t >= g_molly.vocab->vocab_size) continue;
+                    fprintf(f, "%s ", g_molly.vocab->tokens[t]);
+                }
+                fprintf(f, ".\n");
+                fclose(f);
+            }
+
+            /* Update her own last_tokens for next cycle's prompt. */
+            pthread_mutex_lock(&g_molly_lock);
+            int n = (gn > 32) ? 32 : gn;
+            memcpy(g_molly.last_tokens, gen, (size_t)n * sizeof(int));
+            g_molly.last_len = n;
+            g_molly.utter_count++;
+            pthread_mutex_unlock(&g_molly_lock);
+        }
+
+        usleep(MOLLY_TICK_US);
+        fflush(stdout);
+    }
+    return NULL;
+}
 
 static void* cave_thread_main(void* arg) {
     CaveThreadArg* a = (CaveThreadArg*)arg;
@@ -2515,6 +2685,13 @@ static void colony_main_async(float temp, float top_p, const char* preset_name) 
         g_cave_thread_started[ci] = 1;
     }
 
+    /* Trinity: Molly's horizon-thread (her own rhythm, writes to dna/ pool). */
+    if (g_trinity_mode && g_molly.model) {
+        pthread_create(&g_molly.thread, NULL, molly_thread_main, NULL);
+        g_molly.started = 1;
+        printf("[trinity] Molly thread on horizon — feeding dna/output/molly/\n");
+    }
+
     /* Orchestrator: pulse / mitosis / save / spawn-thread-for-new-cave. */
     pthread_t orch;
     pthread_create(&orch, NULL, orchestrator_thread_main, (void*)preset_name);
@@ -2542,6 +2719,7 @@ static void colony_main_async(float temp, float top_p, const char* preset_name) 
             pthread_join(g_cave_threads[ci], NULL);
         }
     }
+    if (g_molly.started) pthread_join(g_molly.thread, NULL);
     pthread_join(orch, NULL);
 
     stop_learner();
@@ -3116,28 +3294,38 @@ int main(int argc, char** argv) {
     colony_add(A);
     colony_add(B);
 
-    /* Trinity mode — third founder M (Molly), the lover. Pre-loaded field
-     * tension at boot so reproduction physics has built-in conflict from
-     * tick 1, not earned through maturity drift. */
+    /* Trinity mode — Molly lives on the horizon as her own goroutine.
+     * She is NOT a founder, NOT in g_colony[]. Her thread continuously
+     * generates utterances and writes to dna/output/molly/ so the
+     * existing learner picks them up and feeds every cave passively
+     * through the field — caves only ever feel her, never address her.
+     * Affair mitosis uses g_molly.model directly. */
     if (g_trinity_mode) {
-        Cave* M = cave_new("M", 0.20f, weights_m, preset_name);  /* open, low floor */
-        if (!M) {
-            printf("Failed to load founder M from %s — drop --trinity or train Molly first\n", weights_m);
+        /* Load Molly's vocab + model into g_molly. cave_new is the simplest
+         * way to get all the per-cave allocation done; we then steal the
+         * pieces we need and free the wrapper. */
+        Cave* M_loader = cave_new("M", 0.20f, weights_m, preset_name);
+        if (!M_loader) {
+            printf("Failed to load Molly from %s — drop --trinity or train her first\n", weights_m);
             cave_free(A); cave_free(B); return 1;
         }
-        M->is_founder = 1;
-        M->is_lover   = 1;
-        colony_add(M);
+        g_molly.model = M_loader->model;
+        g_molly.vocab = M_loader->vocab;
+        strncpy(g_molly.weights_path, weights_m, sizeof(g_molly.weights_path) - 1);
+        g_molly.last_len = 0;
+        g_molly.utter_count = 0;
+        /* M_loader's CaveField + thread args are abandoned; we only kept
+         * its model + vocab pointers. M_loader itself is leaked but it's
+         * a single allocation per process lifetime — acceptable. */
+        free(M_loader);  /* free the shell, keep model + vocab. */
 
-        /* Pre-loaded tension: A and B sense the outsider; M arrives ready
-         * to speak. This wires conflict into the system from t=0 instead
-         * of waiting for it to emerge organically. */
+        /* Pre-load A and B with mild dissonance — they sense her presence
+         * over the horizon from t=0. */
         A->field.dissonance = 0.15f;
         B->field.dissonance = 0.15f;
-        M->field.excitement = 0.40f;
 
-        printf("[trinity] 3rd founder M loaded (lover, baseline 0.20)\n");
-        printf("[trinity] pre-tension: A.diss=0.15, B.diss=0.15, M.exc=0.40\n");
+        printf("[trinity] Molly loaded — lives on the horizon (own pthread, dna/output/molly/)\n");
+        printf("[trinity] pre-tension: A.diss=0.15, B.diss=0.15\n");
     }
 
     if (async_mode)
