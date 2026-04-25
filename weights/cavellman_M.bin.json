@@ -1,0 +1,13 @@
+{
+  "preset": "medium",
+  "embd": 128,
+  "heads": 8,
+  "layers": 4,
+  "ctx": 128,
+  "vocab_size": 88,
+  "params": 826752,
+  "steps": 3000,
+  "final_loss": 1.9012,
+  "dataset": "data/molly_phoned.txt",
+  "seed": 333
+}
