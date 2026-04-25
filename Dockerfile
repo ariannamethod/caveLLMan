@@ -19,9 +19,8 @@ RUN make cavellman
 ENV CAVELLMAN_SPORE_DIR=/data/spore
 RUN mkdir -p /data/spore
 
-# Unbuffered stdout so Railway log stream sees each line as it's printed.
-ENV PYTHONUNBUFFERED=1
-
-# /dev/null on stdin keeps the non-blocking try_read_user_line happy
-# (returns 0 immediately, ring proceeds as autonomous).
-CMD ["sh", "-c", "./cavellman --preset medium --weights weights/cavellman_medium.bin --seed 4242 < /dev/null"]
+# Unbuffered stdout — belt and suspenders. cavellman.c calls setvbuf(_IONBF)
+# in main(), but Docker stdio bridge can still buffer on first deploy; stdbuf
+# -o0 forces unbuffered from outside the binary. exec replaces the sh process
+# so cavellman becomes PID 1 inside the container (clean signal handling).
+CMD ["sh", "-c", "exec stdbuf -o0 ./cavellman --preset medium --weights weights/cavellman_medium.bin --seed 4242 < /dev/null"]

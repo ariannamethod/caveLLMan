@@ -2035,10 +2035,16 @@ static void colony_main(float temp, float top_p, const char* preset_name) {
         }
 
         /* 5a. Spontaneous pulse — every ~500 ticks the quietest cave gets a
-         * small excitement kick so autonomous rings don't collapse into
-         * silent equilibrium (observed 2026-04-22: N=2 medium ring produced
-         * 3 utterances / hour without user input). Preserves autonomy —
-         * no external source, but the colony breathes on its own tempo. */
+         * kick so autonomous rings don't collapse into silent equilibrium.
+         * The kick is ADAPTIVE to the cave's baseline floor: it always
+         * lifts excitement just above the cave's natural threshold
+         * (baseline_floor + 0.05), so a B cave with floor 0.60 actually
+         * crosses its gate, not just an A cave with floor 0.30. The first
+         * 2026-04-25 Railway deploy showed the bug: hardcoded magnitude
+         * 0.15 was below B's baseline 0.30 → pulse hit B repeatedly,
+         * B never spoke, A excluded → entire ring went silent after 20s.
+         * Preserves autonomy: no external input source, just an adaptive
+         * inner heartbeat. */
         static int g_pulse_counter = 0;
         if ((++g_pulse_counter % 500) == 0 && g_colony_n > 0) {
             int quietest = 0;
@@ -2049,9 +2055,11 @@ static void colony_main(float temp, float top_p, const char* preset_name) {
                     ? (float)f->spoke_count / (float)f->total_count : 0.0f;
                 if (r < min_ratio) { min_ratio = r; quietest = ci; }
             }
-            g_colony[quietest]->field.excitement += 0.15f;
-            if (g_colony[quietest]->field.excitement > EXCITEMENT_CAP)
-                g_colony[quietest]->field.excitement = EXCITEMENT_CAP;
+            CaveField* qf = &g_colony[quietest]->field;
+            float kick = qf->baseline_floor + 0.05f;
+            qf->excitement = (kick > qf->excitement) ? kick : qf->excitement;
+            if (qf->excitement > EXCITEMENT_CAP) qf->excitement = EXCITEMENT_CAP;
+            printf("  [pulse] %s exc->%.2f (baseline+0.05)\n", qf->name, qf->excitement);
         }
 
         /* 5b. Sexual mitosis — two fittest caves may spawn a child. */
