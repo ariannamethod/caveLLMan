@@ -2110,7 +2110,14 @@ static int dual_generate(CaveModel* m, CaveVocab* vocab,
     return gen_len;
 }
 
+/* Throttled to fit Railway's 500 logs/sec replica rate. We were spamming
+ * every cave + Molly utterance (~30/s combined) and Railway dropped 500+
+ * lines per crash window — including the SIGSEGV backtrace itself, which
+ * is exactly what we needed to diagnose. Sample 1 in N for non-key labels;
+ * always print emerges, mitoses, errors via their own callsites. */
 static void print_glyphs(const char* label, CaveVocab* v, const int* toks, int len) {
+    static int g_print_counter = 0;
+    if ((g_print_counter++ % 5) != 0) return;
     printf("[%s] ", label);
     for (int i = 0; i < len; i++) {
         if (toks[i] >= 0 && toks[i] < v->vocab_size)
