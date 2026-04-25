@@ -2305,25 +2305,36 @@ static void* cave_thread_main(void* arg) {
         c->field.total_count++;
 
         if (field_should_speak(&c->field)) {
-            /* Snapshot ring's last_tokens under lock for our prompt context. */
+            /* Hold g_learner.lock through the entire generate-and-mutate
+             * block: dual_generate's post-pass (hebbian_update, cooccur_update,
+             * check_symbol_survival, try_emerge_symbol) writes the cave's
+             * own emerged[], vocab, and Hebbian arrays — and the learner
+             * thread modifies those same fields when it ingests feed/ or
+             * dna/. Race lands on Linux NPTL and corrupts vocab_size /
+             * n_emerged → SIGSEGV. Trinity hit this on Railway because M's
+             * pre-loaded excitement makes her speak instantly, all three
+             * caves write DNA right away, and the learner picks them up
+             * within a tick.
+             *
+             * Trade-off: forward passes serialize again (no longer truly
+             * parallel matvec across cores). Correctness > speed for now.
+             * A cleaner fix splits dual_generate into pre/post halves so
+             * only the post-half holds the lock — TODO. */
             int prompt[MAX_SEQ];
             int prompt_len;
+            int gen[MAX_SEQ];
+            int gn;
+
             pthread_mutex_lock(&g_learner.lock);
+
             prompt_len = g_async_last_len;
             if (prompt_len > MAX_SEQ) prompt_len = MAX_SEQ;
             memcpy(prompt, g_async_last_tokens, (size_t)prompt_len * sizeof(int));
-            pthread_mutex_unlock(&g_learner.lock);
 
-            /* Forward pass — TLS KV cache, no lock needed. This is where
-             * async actually buys us throughput: every cave's matvecs run
-             * in parallel on separate cores. */
-            int gen[MAX_SEQ];
-            int gn = dual_generate(c->model, c->vocab, prompt, prompt_len,
-                                   DUAL_MAX_GEN, temp, top_p, gen, MAX_SEQ);
+            gn = dual_generate(c->model, c->vocab, prompt, prompt_len,
+                               DUAL_MAX_GEN, temp, top_p, gen, MAX_SEQ);
 
             if (gn > 0) {
-                pthread_mutex_lock(&g_learner.lock);
-
                 print_glyphs(c->field.name, c->vocab, gen, gn);
                 field_after_speak(&c->field);
 
@@ -2342,9 +2353,7 @@ static void* cave_thread_main(void* arg) {
                 }
 
                 /* Klaus metarecursion — cave re-hears its OWN utterance at
-                 * g_metarecursion weight (default 0.15, klaus 85/15 blend).
-                 * Body re-ingests own exhale: most of the field is the
-                 * world, a small fraction is its own echo coming back. */
+                 * g_metarecursion weight (default 0.15, klaus 85/15 blend). */
                 for (int i = 0; i < gn; i++) {
                     int p = (i == 0) ? prev : gen[i - 1];
                     float before = c->field.excitement;
@@ -2357,9 +2366,9 @@ static void* cave_thread_main(void* arg) {
 
                 memcpy(g_async_last_tokens, gen, (size_t)gn * sizeof(int));
                 g_async_last_len = gn;
-
-                pthread_mutex_unlock(&g_learner.lock);
             }
+
+            pthread_mutex_unlock(&g_learner.lock);
         }
 
         /* Per-cave bookkeeping — own field, no shared state, no lock. */
