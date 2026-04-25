@@ -2567,7 +2567,11 @@ static void* cave_thread_main(void* arg) {
         /* Per-cave bookkeeping — own field, no shared state, no lock. */
         field_decay(&c->field);
         field_maturity_drift(&c->field);
-        field_microtrain_tick(&c->field, c->model);
+        /* DIAG: microtrain_tick disabled for Trinity isolation. It memcpys
+         * into m->tensors[i]->data outside g_learner.lock and forks/execs a
+         * subprocess from one of multiple pthreads — both are suspects for
+         * the post-BLAS-removal residual SIGSEGV in nt_blas_matvec. */
+        // field_microtrain_tick(&c->field, c->model);
         if (c->field.immunity_ticks > 0) c->field.immunity_ticks--;
 
         usleep(DUAL_TICK_US);
