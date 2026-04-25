@@ -4,18 +4,18 @@ FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    libopenblas-dev \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY . .
 
-# Build cavellman WITHOUT BLAS (naive matvec fallback). Trinity SIGSEGV'd
-# inside cblas_sgemv (caught by crash trap) — BLAS interaction with our
-# 4-5 pthread setup is the suspect. Naive matvec is single-loop inline,
-# eliminates all BLAS state. Performance hit is acceptable for the medium
-# preset (E=128, L=4); ring/v1/v2 keep BLAS in their separate services.
-RUN make cavellman-cpu
+# BLAS path back on now that the actual root cause (preset dim mismatch
+# between A/B trained at E=96 small and startCommand --preset medium
+# making forwards read past wq/w_fc1 buffers) is fixed via shape detection
+# in model_load. With correct dims, BLAS is happy too.
+RUN make cavellman
 
 # Persistent state lives on the mounted volume at /data; spore goes under it.
 ENV CAVELLMAN_SPORE_DIR=/data/spore

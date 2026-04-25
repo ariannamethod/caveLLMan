@@ -414,9 +414,31 @@ static CaveModel* model_load(const char* weights_path, const Preset* pr) {
     m->hebbian_lr = 0.001f;
     m->hebbian_decay = 0.9999f;
 
-    /* Freeze this cave's dims. Future model_forward / hebbian_update swap
-     * the globals back to these on entry — so several caves with different
-     * presets can coexist in the ring. */
+    /* Detect actual dims from the loaded tensor shapes — the preset is just
+     * a hint. wte is [V, E]; w_fc1 is [FFN_D, E]. If the file was trained at
+     * a smaller preset than requested, the preset's E would index past the
+     * tensor (Linux SIGSEGV; Mac tolerates the OOB read silently). Trinity
+     * crash-on-Railway hunt landed here: A/B = small (E=96), M = medium
+     * (E=128), startCommand --preset medium → matvec read 128*128 from a
+     * 96*96-sized wq buffer. Detect → use ACTUAL shape, not requested. */
+    int actual_E = (loaded[0]->ndim >= 2) ? loaded[0]->shape[1] : E;
+    int actual_FFN = E;
+    /* w_fc1 is at index 2 + 6 (rms1,wq,wk,wv,wo,rms2,w_fc1) = pi=8 in pass-0 */
+    if (N_L > 0 && loaded[2 + 6]->ndim >= 2) {
+        actual_FFN = loaded[2 + 6]->shape[0];  /* [FFN_D, E] */
+    }
+    if (actual_E != E) {
+        printf("  [model_load] preset says E=%d but file has E=%d — using file dims\n",
+               E, actual_E);
+        E = actual_E;
+        HD = E / H;
+    }
+    if (actual_FFN != FFN_D) {
+        printf("  [model_load] preset says FFN_D=%d but file has %d — using file dims\n",
+               FFN_D, actual_FFN);
+        FFN_D = actual_FFN;
+    }
+
     m->E = E; m->H = H; m->HD = HD;
     m->FFN_D = FFN_D; m->N_L = N_L; m->CTX = CTX;
 
@@ -2567,11 +2589,7 @@ static void* cave_thread_main(void* arg) {
         /* Per-cave bookkeeping — own field, no shared state, no lock. */
         field_decay(&c->field);
         field_maturity_drift(&c->field);
-        /* DIAG: microtrain_tick disabled for Trinity isolation. It memcpys
-         * into m->tensors[i]->data outside g_learner.lock and forks/execs a
-         * subprocess from one of multiple pthreads — both are suspects for
-         * the post-BLAS-removal residual SIGSEGV in nt_blas_matvec. */
-        // field_microtrain_tick(&c->field, c->model);
+        field_microtrain_tick(&c->field, c->model);
         if (c->field.immunity_ticks > 0) c->field.immunity_ticks--;
 
         usleep(DUAL_TICK_US);
