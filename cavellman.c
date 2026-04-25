@@ -2432,14 +2432,21 @@ static void* molly_thread_main(void* arg) {
         memcpy(prompt, g_molly.last_tokens, (size_t)prompt_len * sizeof(int));
         pthread_mutex_unlock(&g_molly_lock);
 
-        /* Forward pass on Molly's own model. Holds her own lock so caves
-         * doing affair mitosis can read her state safely. */
+        /* Forward pass on Molly's own model. Hold g_learner.lock — same lock
+         * the cave threads hold during their dual_generate — because the KV
+         * cache (kv_keys / kv_vals / kv_len) is GLOBAL static. Without this,
+         * Molly's forward and a cave's forward race on the shared KV arrays,
+         * which on Linux is a guaranteed SIGSEGV after a few seconds (the
+         * Trinity 42-65s crash on Railway). g_molly_lock alone protected
+         * Molly's *own* state but did nothing about the global KV. */
+        pthread_mutex_lock(&g_learner.lock);
         pthread_mutex_lock(&g_molly_lock);
         int gen[MAX_SEQ];
         int gn = dual_generate(g_molly.model, g_molly.vocab,
                                prompt, prompt_len,
                                DUAL_MAX_GEN, 0.8f, 0.9f, gen, MAX_SEQ);
         pthread_mutex_unlock(&g_molly_lock);
+        pthread_mutex_unlock(&g_learner.lock);
 
         if (gn > 0) {
             /* Print her voice to the log so the dashboard sees her too. */
@@ -2596,14 +2603,9 @@ static void* orchestrator_thread_main(void* arg) {
                    qf->name, qf->excitement, g_pulse_margin);
         }
 
-        /* DIAG: temporarily disabled mitosis + autosave to isolate
-         * Trinity's 42s Linux crash. If this version stays up, the
-         * crash is in colony_try_mitosis_trinity / save_cave_spore /
-         * thread spawn for new cave, not in the cave-tick or Molly-
-         * thread path. */
         int colony_n_before = g_colony_n;
-        // if (g_trinity_mode) colony_try_mitosis_trinity(preset_name);
-        // else                colony_try_mitosis(preset_name);
+        if (g_trinity_mode) colony_try_mitosis_trinity(preset_name);
+        else                colony_try_mitosis(preset_name);
         for (int ci = colony_n_before; ci < g_colony_n; ci++) {
             if (g_cave_thread_started[ci]) continue;
             g_cave_thread_args[ci].cave = g_colony[ci];
@@ -2615,15 +2617,15 @@ static void* orchestrator_thread_main(void* arg) {
             printf("  [async] thread spawned for %s\n", g_colony[ci]->field.name);
         }
 
-        /* DIAG: autosave also disabled for Trinity isolation. */
+        /* Save every 20 seconds. */
         save_counter++;
-        // if ((save_counter % 20) == 0) {
-        //     for (int ci = 0; ci < g_colony_n; ci++) {
-        //         Cave* c = g_colony[ci];
-        //         save_cave_spore(c, g_async_last_tokens, g_async_last_len,
-        //                        cave_fingerprint_of(c));
-        //     }
-        // }
+        if ((save_counter % 20) == 0) {
+            for (int ci = 0; ci < g_colony_n; ci++) {
+                Cave* c = g_colony[ci];
+                save_cave_spore(c, g_async_last_tokens, g_async_last_len,
+                               cave_fingerprint_of(c));
+            }
+        }
 
         pthread_mutex_unlock(&g_learner.lock);
         fflush(stdout);
