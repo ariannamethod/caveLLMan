@@ -2301,10 +2301,20 @@ static void* cave_thread_main(void* arg) {
     float temp = a->temp;
     float top_p = a->top_p;
 
+    printf("[debug] cave_thread_main START for %s (tid)\n", c->field.name);
+    fflush(stdout);
+
+    int dbg_speak_count = 0;
+
     while (g_async_running) {
         c->field.total_count++;
 
         if (field_should_speak(&c->field)) {
+            if (dbg_speak_count < 3) {
+                printf("[debug] %s about to speak (excitement=%.2f floor=%.2f)\n",
+                       c->field.name, c->field.excitement, c->field.coherence_floor);
+                fflush(stdout);
+            }
             /* Hold g_learner.lock through the entire generate-and-mutate
              * block: dual_generate's post-pass (hebbian_update, cooccur_update,
              * check_symbol_survival, try_emerge_symbol) writes the cave's
@@ -2331,8 +2341,18 @@ static void* cave_thread_main(void* arg) {
             if (prompt_len > MAX_SEQ) prompt_len = MAX_SEQ;
             memcpy(prompt, g_async_last_tokens, (size_t)prompt_len * sizeof(int));
 
+            if (dbg_speak_count < 3) {
+                printf("[debug] %s lock acquired, calling dual_generate (prompt_len=%d)\n",
+                       c->field.name, prompt_len);
+                fflush(stdout);
+            }
             gn = dual_generate(c->model, c->vocab, prompt, prompt_len,
                                DUAL_MAX_GEN, temp, top_p, gen, MAX_SEQ);
+            if (dbg_speak_count < 3) {
+                printf("[debug] %s dual_generate returned gn=%d\n", c->field.name, gn);
+                fflush(stdout);
+            }
+            dbg_speak_count++;
 
             if (gn > 0) {
                 print_glyphs(c->field.name, c->vocab, gen, gn);
@@ -2503,18 +2523,31 @@ static void colony_main_async(float temp, float top_p, const char* preset_name) 
     printf("──────────────────────────────────────────────────────────\n\n");
 
     /* Spawn one pthread per cave. */
+    printf("[debug] colony_main_async: about to spawn %d cave threads\n", g_colony_n);
+    fflush(stdout);
     for (int ci = 0; ci < g_colony_n; ci++) {
         g_cave_thread_args[ci].cave = g_colony[ci];
         g_cave_thread_args[ci].temp = temp;
         g_cave_thread_args[ci].top_p = top_p;
-        pthread_create(&g_cave_threads[ci], NULL,
-                       cave_thread_main, &g_cave_thread_args[ci]);
+        int rc = pthread_create(&g_cave_threads[ci], NULL,
+                                cave_thread_main, &g_cave_thread_args[ci]);
+        if (rc != 0) {
+            printf("[debug] pthread_create FAILED for cave %d (%s) rc=%d\n",
+                   ci, g_colony[ci]->field.name, rc);
+            fflush(stdout);
+        } else {
+            printf("[debug] thread spawned for cave %d (%s)\n",
+                   ci, g_colony[ci]->field.name);
+            fflush(stdout);
+        }
         g_cave_thread_started[ci] = 1;
     }
 
     /* Orchestrator: pulse / mitosis / save / spawn-thread-for-new-cave. */
     pthread_t orch;
-    pthread_create(&orch, NULL, orchestrator_thread_main, (void*)preset_name);
+    int rc_orch = pthread_create(&orch, NULL, orchestrator_thread_main, (void*)preset_name);
+    printf("[debug] orchestrator pthread_create rc=%d\n", rc_orch);
+    fflush(stdout);
 
     /* Main thread polls stdin for quit signal. */
     int flags = fcntl(fileno(stdin), F_GETFL, 0);
