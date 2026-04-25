@@ -2596,10 +2596,14 @@ static void* orchestrator_thread_main(void* arg) {
                    qf->name, qf->excitement, g_pulse_margin);
         }
 
-        /* Mitosis check — if it spawns a child, start its thread. */
+        /* DIAG: temporarily disabled mitosis + autosave to isolate
+         * Trinity's 42s Linux crash. If this version stays up, the
+         * crash is in colony_try_mitosis_trinity / save_cave_spore /
+         * thread spawn for new cave, not in the cave-tick or Molly-
+         * thread path. */
         int colony_n_before = g_colony_n;
-        if (g_trinity_mode) colony_try_mitosis_trinity(preset_name);
-        else                colony_try_mitosis(preset_name);
+        // if (g_trinity_mode) colony_try_mitosis_trinity(preset_name);
+        // else                colony_try_mitosis(preset_name);
         for (int ci = colony_n_before; ci < g_colony_n; ci++) {
             if (g_cave_thread_started[ci]) continue;
             g_cave_thread_args[ci].cave = g_colony[ci];
@@ -2611,15 +2615,15 @@ static void* orchestrator_thread_main(void* arg) {
             printf("  [async] thread spawned for %s\n", g_colony[ci]->field.name);
         }
 
-        /* Save every 20 seconds. */
+        /* DIAG: autosave also disabled for Trinity isolation. */
         save_counter++;
-        if ((save_counter % 20) == 0) {
-            for (int ci = 0; ci < g_colony_n; ci++) {
-                Cave* c = g_colony[ci];
-                save_cave_spore(c, g_async_last_tokens, g_async_last_len,
-                               cave_fingerprint_of(c));
-            }
-        }
+        // if ((save_counter % 20) == 0) {
+        //     for (int ci = 0; ci < g_colony_n; ci++) {
+        //         Cave* c = g_colony[ci];
+        //         save_cave_spore(c, g_async_last_tokens, g_async_last_len,
+        //                        cave_fingerprint_of(c));
+        //     }
+        // }
 
         pthread_mutex_unlock(&g_learner.lock);
         fflush(stdout);
