@@ -36,7 +36,7 @@ all: cavellman
 # ── Ring engine (dual-only) ─────────────────────────────────────────────
 
 cavellman: cavellman.c ariannamethod/notorch.c ariannamethod/notorch.h
-	$(CC) $(CFLAGS) $(BLAS_FLAGS) -Iariannamethod -o cavellman cavellman.c ariannamethod/notorch.c -lm -lpthread
+	$(CC) $(CFLAGS) -Iariannamethod -o cavellman cavellman.c ariannamethod/notorch.c -lm -lpthread $(BLAS_FLAGS)
 	@echo "Compiled: cavellman (dual ring + Hebbian + async learner + $(BLAS_NAME))"
 
 cavellman-cpu: cavellman.c ariannamethod/notorch.c ariannamethod/notorch.h
