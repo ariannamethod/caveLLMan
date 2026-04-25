@@ -1983,12 +1983,7 @@ static int dual_generate(CaveModel* m, CaveVocab* vocab,
     cooccur_update(&m->cooccur, all, al);
     cooccur_decay(&m->cooccur, 0.999f);
     check_symbol_survival(m, vocab);
-    /* DIAG: disabled try_emerge_symbol — first Trinity Railway deploy crashed
-     * silently right after this fired ("up+BE id=88" emerged, vocab_size grew
-     * to collide with bos_id=88, container died). Disabling to confirm emerge
-     * is the trigger. If Trinity now stays up, fix bos_id allocation to live
-     * at MAX_VOCAB-2 instead of vocab_size, then re-enable. */
-    /* try_emerge_symbol(m, vocab); */
+    try_emerge_symbol(m, vocab);
 
     return gen_len;
 }
