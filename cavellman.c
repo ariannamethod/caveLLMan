@@ -443,10 +443,13 @@ static CaveModel* model_load(const char* weights_path, const Preset* pr) {
 
 /* ── Forward pass (single token, with KV cache + Hebbian) ──────────────── */
 
-/* KV cache */
-static float kv_keys[8][128][128];   /* [layer][pos][E] */
-static float kv_vals[8][128][128];
-static int   kv_len = 0;
+/* KV cache — thread-local so each cave thread in async mode owns its own.
+ * In sync mode, one main thread uses one TLS slot; semantics unchanged.
+ * In async mode (--async flag), N cave threads each get an independent KV
+ * cache, and forward passes run truly parallel without locks. */
+static __thread float kv_keys[8][128][128];   /* [layer][pos][E] */
+static __thread float kv_vals[8][128][128];
+static __thread int   kv_len = 0;
 
 static void kv_reset(void) { kv_len = 0; }
 
@@ -2115,6 +2118,301 @@ static void colony_main(float temp, float top_p, const char* preset_name) {
     printf("the colony remembers.\n");
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * Async ring (--async flag) — each cave runs its own pthread, ticking at
+ * its own pace. Forward passes execute in parallel (TLS KV cache), shared
+ * state mutations serialize through g_learner.lock. molequla shows that
+ * concurrent organism processes give ~N× CPU usage on multi-core hosts;
+ * caveLLMan's sync ring used at most one core because the tick loop
+ * iterated caves sequentially. Async fixes that.
+ *
+ * Klaus-style metarecursion: after a cave speaks, it re-hears its own
+ * utterance through field_hear at 15% weight. Body re-ingests own exhale
+ * (klaus.c "META-RECURSION (re-inhale own output, blend 85/15)").
+ * ═══════════════════════════════════════════════════════════════════════ */
+
+static volatile int g_async_running = 1;
+static int g_async_last_tokens[MAX_SEQ];
+static int g_async_last_len = 0;
+static int g_async_dna_counter = 0;
+static pthread_t g_cave_threads[COLONY_MAX];
+static int       g_cave_thread_started[COLONY_MAX];
+
+/* Tweakable async knobs — two parallel async deploys can differ on these
+ * (Railway customStartCommand passes different --metarecursion / --pulse-margin
+ * values) for A/B observation. */
+static float g_metarecursion = 0.15f;  /* klaus 85/15 default */
+static float g_pulse_margin  = 0.05f;  /* default kick = baseline_floor + 0.05 */
+
+typedef struct {
+    Cave* cave;
+    float temp;
+    float top_p;
+} CaveThreadArg;
+
+static CaveThreadArg g_cave_thread_args[COLONY_MAX];
+
+static void* cave_thread_main(void* arg) {
+    CaveThreadArg* a = (CaveThreadArg*)arg;
+    Cave* c = a->cave;
+    float temp = a->temp;
+    float top_p = a->top_p;
+
+    while (g_async_running) {
+        c->field.total_count++;
+
+        if (field_should_speak(&c->field)) {
+            /* Snapshot ring's last_tokens under lock for our prompt context. */
+            int prompt[MAX_SEQ];
+            int prompt_len;
+            pthread_mutex_lock(&g_learner.lock);
+            prompt_len = g_async_last_len;
+            if (prompt_len > MAX_SEQ) prompt_len = MAX_SEQ;
+            memcpy(prompt, g_async_last_tokens, (size_t)prompt_len * sizeof(int));
+            pthread_mutex_unlock(&g_learner.lock);
+
+            /* Forward pass — TLS KV cache, no lock needed. This is where
+             * async actually buys us throughput: every cave's matvecs run
+             * in parallel on separate cores. */
+            int gen[MAX_SEQ];
+            int gn = dual_generate(c->model, c->vocab, prompt, prompt_len,
+                                   DUAL_MAX_GEN, temp, top_p, gen, MAX_SEQ);
+
+            if (gn > 0) {
+                pthread_mutex_lock(&g_learner.lock);
+
+                print_glyphs(c->field.name, c->vocab, gen, gn);
+                field_after_speak(&c->field);
+
+                /* Other caves hear this utterance. */
+                int prev = (g_async_last_len > 0)
+                    ? g_async_last_tokens[g_async_last_len - 1]
+                    : -1;
+                for (int ci = 0; ci < g_colony_n; ci++) {
+                    if (g_colony[ci] == c) continue;
+                    Cave* other = g_colony[ci];
+                    for (int i = 0; i < gn; i++) {
+                        int p = (i == 0) ? prev : gen[i - 1];
+                        field_hear(&other->field, other->model, p, gen[i]);
+                    }
+                    field_append_holding(&other->field, c->vocab, gen, gn);
+                }
+
+                /* Klaus metarecursion — cave re-hears its OWN utterance at
+                 * g_metarecursion weight (default 0.15, klaus 85/15 blend).
+                 * Body re-ingests own exhale: most of the field is the
+                 * world, a small fraction is its own echo coming back. */
+                for (int i = 0; i < gn; i++) {
+                    int p = (i == 0) ? prev : gen[i - 1];
+                    float before = c->field.excitement;
+                    field_hear(&c->field, c->model, p, gen[i]);
+                    float delta = c->field.excitement - before;
+                    c->field.excitement = before + delta * g_metarecursion;
+                }
+
+                if ((++g_async_dna_counter % 2) == 0) dna_write_cave(c, gen, gn);
+
+                memcpy(g_async_last_tokens, gen, (size_t)gn * sizeof(int));
+                g_async_last_len = gn;
+
+                pthread_mutex_unlock(&g_learner.lock);
+            }
+        }
+
+        /* Per-cave bookkeeping — own field, no shared state, no lock. */
+        field_decay(&c->field);
+        field_maturity_drift(&c->field);
+        field_microtrain_tick(&c->field, c->model);
+        if (c->field.immunity_ticks > 0) c->field.immunity_ticks--;
+
+        usleep(DUAL_TICK_US);
+        fflush(stdout);
+    }
+
+    return NULL;
+}
+
+static void* orchestrator_thread_main(void* arg) {
+    const char* preset_name = (const char*)arg;
+    int pulse_counter = 0;
+    int save_counter = 0;
+
+    while (g_async_running) {
+        sleep(1);
+        if (!g_async_running) break;
+
+        pthread_mutex_lock(&g_learner.lock);
+
+        /* Pulse every 5 seconds (wall clock — independent of per-cave tick rate). */
+        pulse_counter++;
+        if ((pulse_counter % 5) == 0 && g_colony_n > 0) {
+            int quietest = 0;
+            float min_ratio = 1e9f;
+            for (int ci = 0; ci < g_colony_n; ci++) {
+                const CaveField* f = &g_colony[ci]->field;
+                float r = (f->total_count > 0)
+                    ? (float)f->spoke_count / (float)f->total_count : 0.0f;
+                if (r < min_ratio) { min_ratio = r; quietest = ci; }
+            }
+            CaveField* qf = &g_colony[quietest]->field;
+            float kick = qf->baseline_floor + g_pulse_margin;
+            qf->excitement = (kick > qf->excitement) ? kick : qf->excitement;
+            if (qf->excitement > EXCITEMENT_CAP) qf->excitement = EXCITEMENT_CAP;
+            printf("  [pulse-async] %s exc->%.2f (baseline+%.2f)\n",
+                   qf->name, qf->excitement, g_pulse_margin);
+        }
+
+        /* Mitosis check — if it spawns a child, start its thread. */
+        int colony_n_before = g_colony_n;
+        colony_try_mitosis(preset_name);
+        for (int ci = colony_n_before; ci < g_colony_n; ci++) {
+            if (g_cave_thread_started[ci]) continue;
+            g_cave_thread_args[ci].cave = g_colony[ci];
+            g_cave_thread_args[ci].temp = g_cave_thread_args[0].temp;
+            g_cave_thread_args[ci].top_p = g_cave_thread_args[0].top_p;
+            pthread_create(&g_cave_threads[ci], NULL,
+                           cave_thread_main, &g_cave_thread_args[ci]);
+            g_cave_thread_started[ci] = 1;
+            printf("  [async] thread spawned for %s\n", g_colony[ci]->field.name);
+        }
+
+        /* Save every 20 seconds. */
+        save_counter++;
+        if ((save_counter % 20) == 0) {
+            for (int ci = 0; ci < g_colony_n; ci++) {
+                Cave* c = g_colony[ci];
+                save_cave_spore(c, g_async_last_tokens, g_async_last_len,
+                               cave_fingerprint_of(c));
+            }
+        }
+
+        pthread_mutex_unlock(&g_learner.lock);
+        fflush(stdout);
+    }
+    return NULL;
+}
+
+static void colony_main_async(float temp, float top_p, const char* preset_name) {
+    /* Bootstrap (same logic as sync colony_main — wake-from-yesterday OR
+     * neutral BE pulse fallback). Only difference is we copy the bootstrap
+     * tokens into the global g_async_last_tokens for cave threads to read. */
+    int last_tokens[MAX_SEQ];
+    int last_len = 0;
+
+    int best_ci = -1;
+    float best_exc = -1.0f;
+    for (int ci = 0; ci < g_colony_n; ci++) {
+        if (g_colony[ci]->last_len > 0 && g_colony[ci]->field.excitement > best_exc) {
+            best_exc = g_colony[ci]->field.excitement;
+            best_ci = ci;
+        }
+    }
+
+    if (best_ci >= 0 && best_exc > 0.0f) {
+        Cave* waker = g_colony[best_ci];
+        int n = waker->last_len;
+        if (n > MAX_SEQ) n = MAX_SEQ;
+        memcpy(last_tokens, waker->last_tokens, (size_t)n * sizeof(int));
+        last_len = n;
+        for (int i = 0; i < n; i++) {
+            int prev = (i == 0) ? -1 : last_tokens[i-1];
+            for (int ci = 0; ci < g_colony_n; ci++)
+                field_hear(&g_colony[ci]->field, g_colony[ci]->model, prev, last_tokens[i]);
+        }
+        printf("  [wake] %s speaks from yesterday (%d tokens, exc %.2f)\n",
+               waker->field.name, n, best_exc);
+    } else {
+        int be_id = semtok_find_glyph("BE");
+        if (be_id >= 0) {
+            for (int ci = 0; ci < g_colony_n; ci++)
+                field_hear(&g_colony[ci]->field, g_colony[ci]->model, -1, be_id);
+            last_tokens[0] = be_id;
+            last_len = 1;
+        }
+    }
+
+    memcpy(g_async_last_tokens, last_tokens, (size_t)last_len * sizeof(int));
+    g_async_last_len = last_len;
+    g_async_dna_counter = 0;
+    g_async_running = 1;
+
+    printf("══════════════════════════════════════════════════════════\n");
+    printf("  caveLLMan — ASYNC RING (n=%d, threads-per-cave)\n", g_colony_n);
+    printf("══════════════════════════════════════════════════════════\n");
+    for (int ci = 0; ci < g_colony_n; ci++) {
+        CaveField* f = &g_colony[ci]->field;
+        printf("  %s: baseline floor %.2f\n", f->name, f->baseline_floor);
+    }
+    printf("  tunnel=%.2f, decay=%.2f/%.2f, maturity drift +-%.2f\n",
+           TUNNEL_THRESHOLD, EXCITEMENT_DECAY, DISSONANCE_DECAY, MATURITY_CAP);
+    printf("  klaus metarecursion: cave re-hears own exhale @ 15%% weight\n");
+    start_learner("feed", DNA_DIR);
+    printf("──────────────────────────────────────────────────────────\n\n");
+
+    /* Spawn one pthread per cave. */
+    for (int ci = 0; ci < g_colony_n; ci++) {
+        g_cave_thread_args[ci].cave = g_colony[ci];
+        g_cave_thread_args[ci].temp = temp;
+        g_cave_thread_args[ci].top_p = top_p;
+        pthread_create(&g_cave_threads[ci], NULL,
+                       cave_thread_main, &g_cave_thread_args[ci]);
+        g_cave_thread_started[ci] = 1;
+    }
+
+    /* Orchestrator: pulse / mitosis / save / spawn-thread-for-new-cave. */
+    pthread_t orch;
+    pthread_create(&orch, NULL, orchestrator_thread_main, (void*)preset_name);
+
+    /* Main thread polls stdin for quit signal. */
+    int flags = fcntl(fileno(stdin), F_GETFL, 0);
+    fcntl(fileno(stdin), F_SETFL, flags | O_NONBLOCK);
+
+    char ubuf[512];
+    while (g_async_running) {
+        if (try_read_user_line(ubuf, sizeof(ubuf)) > 0) {
+            if (strcmp(ubuf, "quit") == 0 || strcmp(ubuf, "exit") == 0) {
+                g_async_running = 0;
+                break;
+            }
+        }
+        sleep(1);
+    }
+
+    g_async_running = 0;
+
+    /* Join all threads. */
+    for (int ci = 0; ci < g_colony_n; ci++) {
+        if (g_cave_thread_started[ci]) {
+            pthread_join(g_cave_threads[ci], NULL);
+        }
+    }
+    pthread_join(orch, NULL);
+
+    stop_learner();
+
+    printf("\n");
+    for (int ci = 0; ci < g_colony_n; ci++) {
+        Cave* c = g_colony[ci];
+        if (save_cave_spore(c, g_async_last_tokens, g_async_last_len,
+                            cave_fingerprint_of(c)) == 0)
+            printf("  [%s] spore saved.\n", c->field.name);
+    }
+
+    for (int ci = 0; ci < g_colony_n; ci++) {
+        CaveField* f = &g_colony[ci]->field;
+        if (f->microtrain_active) waitpid(f->microtrain_pid, NULL, 0);
+    }
+
+    printf("\n");
+    for (int ci = 0; ci < g_colony_n; ci++) {
+        CaveField* f = &g_colony[ci]->field;
+        printf("  [%s] spoke %d / %d turns, final floor %.3f, microtrains=%d\n",
+               f->name, f->spoke_count, f->total_count,
+               f->coherence_floor, f->microtrain_done_count);
+    }
+    printf("the colony remembers (async).\n");
+}
+
 /* ── Persistence layer — per-cave binary spore ──────────────────────────
  *
  * Brings back the pre-colony save/load layer that was dropped during the
@@ -2606,6 +2904,7 @@ int main(int argc, char** argv) {
     const char* preset_name = "small";
     float temp = 0.8f, top_p = 0.9f;
     int seed = 42;
+    int async_mode = 0;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--weights") == 0 && i+1 < argc) {
@@ -2618,15 +2917,21 @@ int main(int argc, char** argv) {
         else if (strcmp(argv[i], "--seed") == 0 && i+1 < argc) seed = atoi(argv[++i]);
         else if (strcmp(argv[i], "--weights-a") == 0 && i+1 < argc) weights_a = argv[++i];
         else if (strcmp(argv[i], "--weights-b") == 0 && i+1 < argc) weights_b = argv[++i];
+        else if (strcmp(argv[i], "--async") == 0) async_mode = 1;
+        else if (strcmp(argv[i], "--metarecursion") == 0 && i+1 < argc) g_metarecursion = (float)atof(argv[++i]);
+        else if (strcmp(argv[i], "--pulse-margin") == 0 && i+1 < argc) g_pulse_margin = (float)atof(argv[++i]);
         else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             printf("cavellman — self-evolving hieroglyphic language model (dual-only)\n\n");
-            printf("  --weights FILE     Shared weights for both engines\n");
-            printf("  --weights-a FILE   A's weights (extrovert, coherence_floor 0.30)\n");
-            printf("  --weights-b FILE   B's weights (introvert, coherence_floor 0.60)\n");
-            printf("  --preset NAME      Model preset (default: small)\n");
-            printf("  --temp FLOAT       Temperature (default: 0.8)\n");
-            printf("  --top-p FLOAT      Nucleus sampling (default: 0.9)\n");
-            printf("  --seed N           RNG seed (default: 42)\n\n");
+            printf("  --weights FILE         Shared weights for both engines\n");
+            printf("  --weights-a FILE       A's weights (extrovert, coherence_floor 0.30)\n");
+            printf("  --weights-b FILE       B's weights (introvert, coherence_floor 0.60)\n");
+            printf("  --preset NAME          Model preset (default: small)\n");
+            printf("  --temp FLOAT           Temperature (default: 0.8)\n");
+            printf("  --top-p FLOAT          Nucleus sampling (default: 0.9)\n");
+            printf("  --seed N               RNG seed (default: 42)\n");
+            printf("  --async                Each cave runs its own pthread (parallel forward passes)\n");
+            printf("  --metarecursion FLOAT  Async only: cave's own-exhale re-hearing weight (default 0.15)\n");
+            printf("  --pulse-margin FLOAT   Async only: pulse magnitude = baseline_floor + this (default 0.05)\n\n");
             printf("Default: two caves (A=Dracula extrovert, B=Frankenstein introvert) talk.\n");
             printf("You can type glyphs into the ring, or stay silent — the cave does not need you.\n");
             return 0;
@@ -2652,7 +2957,10 @@ int main(int argc, char** argv) {
     colony_add(A);
     colony_add(B);
 
-    colony_main(temp, top_p, preset_name);
+    if (async_mode)
+        colony_main_async(temp, top_p, preset_name);
+    else
+        colony_main(temp, top_p, preset_name);
 
     for (int ci = 0; ci < g_colony_n; ci++) cave_free(g_colony[ci]);
     g_colony_n = 0;
