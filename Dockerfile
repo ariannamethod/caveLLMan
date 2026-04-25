@@ -19,8 +19,8 @@ RUN make cavellman
 ENV CAVELLMAN_SPORE_DIR=/data/spore
 RUN mkdir -p /data/spore
 
-# Unbuffered stdout — belt and suspenders. cavellman.c calls setvbuf(_IONBF)
-# in main(), but Docker stdio bridge can still buffer on first deploy; stdbuf
-# -o0 forces unbuffered from outside the binary. exec replaces the sh process
-# so cavellman becomes PID 1 inside the container (clean signal handling).
-CMD ["sh", "-c", "exec stdbuf -o0 ./cavellman --preset medium --weights weights/cavellman_medium.bin --seed 4242 < /dev/null"]
+# Direct exec of cavellman — Docker default stdio is enough now that the
+# tick loop fflush(stdout)es every 100 ms. No sh wrapper, no stdbuf, no
+# stdin redirect: cavellman's fcntl(O_NONBLOCK) on a closed/disconnected
+# stdin returns EOF immediately, ring proceeds as autonomous.
+CMD ["./cavellman", "--preset", "medium", "--weights", "weights/cavellman_medium.bin", "--seed", "4242"]

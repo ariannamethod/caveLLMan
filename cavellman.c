@@ -2077,6 +2077,12 @@ static void colony_main(float temp, float top_p, const char* preset_name) {
 
         pthread_mutex_unlock(&g_learner.lock);
 
+        /* Force flush stdout each tick — Railway's logging driver buffers
+         * tiny writes regardless of setvbuf(_IONBF) on the C side, so
+         * silence in the log stream looked like a dead ring on the first
+         * deploy. Cheap call (10 Hz at our tick rate). */
+        fflush(stdout);
+
         /* 6. Pace (outside the lock so the feed/ thread can work) */
         usleep(DUAL_TICK_US);
     }
