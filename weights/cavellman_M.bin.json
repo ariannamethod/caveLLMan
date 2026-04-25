@@ -6,8 +6,8 @@
   "ctx": 128,
   "vocab_size": 88,
   "params": 826752,
-  "steps": 3000,
-  "final_loss": 1.9012,
+  "steps": 8000,
+  "final_loss": 2.5356,
   "dataset": "data/molly_phoned.txt",
   "seed": 333
 }
