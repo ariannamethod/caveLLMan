@@ -315,6 +315,59 @@ So the colony runs on **three** learning clocks: Hebbian every turn (fast, shall
 
 Safeguards (planned, not yet in code): sha256 whitelist of approved sources, holding-area gate with `!learn <hash>` command, unknown-word ratio rejection. For now the holding buffer is trusted — don't expose it to untrusted text.
 
+### 10. Async Ring + Klaus Metarecursion
+
+The default `./cavellman` is a synchronous tick loop. Pass `--async` and each cave runs in its own pthread with the orchestrator on a third thread doing pulse / mitosis / autosave at 1Hz, while a learner thread on a fourth processes `feed/` and `dna/` at its own pace. Forwards still serialize on `g_learner.lock` (the KV cache and per-cave emerged/cooccur state are global enough to need it), but everything else — silence drift, maturity, microtrain spawn, DNA write — runs in parallel. Local Mac smoke shows ~19 utterances/sec vs ~0.3 sync — the field is genuinely louder.
+
+Two knobs, both passed at startup with no rebuild required:
+
+- `--metarecursion <0..1>` — **klaus metarecursion**. After every utterance, the cave re-hears its own exhale at this weight (default `0.15`). At `0.15` it's the klaus 85/15 self-rehearing default; at `0.35` the cave fixates on its own voice; at `0.0` it's pure other-listening. Field-level analogue of self-attention but applied retrospectively to one's own just-spoken sequence.
+- `--pulse-margin <float>` — the orchestrator picks the quietest cave on each pass and gives it an excitement kick of `baseline_floor + pulse_margin`. Default `0.05` is gentle, `0.10` is paranoid. Stops the ring from settling into silent equilibrium when nobody trips the speak gate organically.
+
+Same binary, same weights, same ring topology — just two scalars. We currently run two flavors continuously on Railway as a controlled A/B:
+
+- **klaus-default** — `--async --metarecursion 0.15 --pulse-margin 0.05`. Soft self-rehearing, gentle pulses. The "default cave running on its own" voice.
+- **paranoid** — `--async --metarecursion 0.35 --pulse-margin 0.10`. Heavy self-fixation, sharper kicks. A cave that listens to itself harder than it listens to its neighbour.
+
+Both share one code path, both speak the same 88 glyphs, both run forever — and the difference in their dna/ pools is the experiment.
+
+### 11. Trinity — three founders, family / affair / jealousy
+
+`--trinity` extends the ring to three founders **A**, **B**, and **M** — Molly, the lover. M is loaded as her own organism (`weights/cavellman_M.bin`, trained on Joyce's *Ulysses* chapter 18, the Molly Bloom soliloquy — 24K words and 8 punctuation marks total, glyph-compressed through the same semantic tokenizer as the cave ring) and runs in a fourth pthread continuously emitting utterances to `dna/output/molly/`, where the existing async learner picks her up and feeds every other cave passively. **She lives on the horizon**, never inside the colony array — caves only ever feel her, never address her directly.
+
+Mitosis in trinity mode chooses one of two paths each time the eligibility gate trips, driven by AML cosmic physics:
+
+```
+cosmic_tension(t)  = (sin(t/86400 · 2π) + 1) / 2          // 24h sinusoid
+ring_coherence    = 1 − mean(cave.dissonance)
+affair_prob       = clip(0.2 + cosmic_tension − 0.5·ring_coherence, 0, 1)
+```
+
+- **Family-mode** (`1 − affair_prob`): blend two non-lover caves, normal child.
+- **Affair-mode** (`affair_prob`): blend a chosen cave × Molly's stable on-disk weights → **bastard** child (`is_bastard=1`). Every non-parent cave in the ring gets a **jealousy field event**: dissonance +0.30, coherence floor +0.05 within MATURITY_CAP. The ring physically reacts to the affair.
+
+Pre-tension is wired in from t=0 (A.dissonance=0.15, B.dissonance=0.15, M.excitement=0.40) so the conflict isn't earned through maturity drift — it's the initial condition. Eligibility gate is also dropped (`MITOSIS_MIN_TOTAL_TURNS 120 → 30`, `MITOSIS_MIN_CPT_DONE 1 → 0`) — the design says the ring has no chance NOT to start reproducing.
+
+```bash
+./cavellman --trinity --metarecursion 0.20 --pulse-margin 0.07
+```
+
+```
+[trinity] Molly thread on horizon — feeding dna/output/molly/
+[trinity] pre-tension: A.diss=0.15, B.diss=0.15
+*** SYMBOL EMERGED: me+BE (id=88) ***
+*** AFFAIR MITOSIS: M × B → C1 (cosmic 0.97 coh 0.07 prob 1.00) ***
+[jealousy] 1 non-parent caves: dissonance +0.30, floor +0.05
+[B] strength strength strength strength ...   ← voice collapse under jealousy
+[A] internet many not outside fear ...        ← intact
+[C1] dream bond never pain ...                ← bastard speaks immediately
+[M] me have see                               ← Molly continues from horizon
+```
+
+B's voice collapses into a `strength strength strength` refrain right after the affair fires — the jealousy field does what AML predicts, structurally, on the very first cycle. Trinity runs continuously on Railway alongside the two async flavors above; by 8 minutes of uptime it has produced two affair children (C1 + C2) and four voices speak at once.
+
+A practical bonus that fell out of the trinity hunt: `model_load` now detects each tensor's actual `E` and `FFN_D` from the file's shape and overrides the requested preset. **Caves with different presets coexist in one ring** (trinity needs this — A/B small, M medium) — and any future cross-architecture fusion can borrow the same code path.
+
 ---
 
 ## Quick Start
