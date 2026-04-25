@@ -29,7 +29,8 @@ ifeq ($(UNAME), Linux)
   BLAS_NAME = OpenBLAS
   # -rdynamic + -g make backtrace_symbols print function names from the crash
   # trap installed in main(). -O2 stays — the names just resolve.
-  CFLAGS += -g -rdynamic
+  # _GNU_SOURCE: sigaction, SA_RESETHAND, strdup, usleep, fileno on glibc.
+  CFLAGS += -g -rdynamic -D_GNU_SOURCE
 endif
 
 .PHONY: all cavellman cavellman-cpu train train_cavellman train_diffusion weights clean help
