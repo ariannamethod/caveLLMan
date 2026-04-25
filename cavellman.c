@@ -2700,11 +2700,13 @@ static void colony_main_async(float temp, float top_p, const char* preset_name) 
         g_cave_thread_started[ci] = 1;
     }
 
-    /* Trinity: Molly's horizon-thread (her own rhythm, writes to dna/ pool). */
+    /* Trinity: Molly's horizon-thread (her own rhythm, writes to dna/ pool).
+     * DIAG: temporarily disabled to confirm whether the Linux Trinity 30-65s
+     * silent crash is in Molly's thread or in the cave/orchestrator path. */
     if (g_trinity_mode && g_molly.model) {
-        pthread_create(&g_molly.thread, NULL, molly_thread_main, NULL);
-        g_molly.started = 1;
-        printf("[trinity] Molly thread on horizon — feeding dna/output/molly/\n");
+        // pthread_create(&g_molly.thread, NULL, molly_thread_main, NULL);
+        // g_molly.started = 1;
+        printf("[trinity] Molly thread DIAG-DISABLED (model loaded but not running)\n");
     }
 
     /* Orchestrator: pulse / mitosis / save / spawn-thread-for-new-cave. */
