@@ -1,0 +1,15 @@
+# Railway service config for the cavellman ring.
+# Pairs with Dockerfile in the repo root.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# Ring is single-process — restart on failure but don't loop forever.
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+# No HTTP port — this is a background organism, not a web service.
+# Railway will not assign a public domain. Logs are accessed via the
+# Railway dashboard or `railway logs` (later via API for Copilot observers).

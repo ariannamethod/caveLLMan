@@ -2214,9 +2214,18 @@ static float cave_emerged_alive_ratio(const CaveModel* m) {
     return (float)alive / (float)m->n_emerged;
 }
 
-/* Build the spore path from the cave's name. Caller owns the buffer. */
+/* Build the spore path from the cave's name. Caller owns the buffer.
+ * Honor CAVELLMAN_SPORE_DIR env var when set (Railway / Docker volume mount);
+ * fall back to weights/ for local Mac runs. mkdir is best-effort — if the
+ * directory already exists or is on a mounted volume, EEXIST is fine. */
 static void cave_spore_path(const char* name, char* out, size_t out_sz) {
-    snprintf(out, out_sz, "weights/cavellman_%s.spore", name);
+    const char* dir = getenv("CAVELLMAN_SPORE_DIR");
+    if (dir && dir[0]) {
+        mkdir(dir, 0755);
+        snprintf(out, out_sz, "%s/cavellman_%s.spore", dir, name);
+    } else {
+        snprintf(out, out_sz, "weights/cavellman_%s.spore", name);
+    }
 }
 
 /*
