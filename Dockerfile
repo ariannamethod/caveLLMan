@@ -4,16 +4,18 @@ FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    libopenblas-dev \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY . .
 
-# Build cavellman with BLAS path on Linux (Makefile auto-detects UNAME=Linux
-# and links OpenBLAS via -lopenblas).
-RUN make cavellman
+# Build cavellman WITHOUT BLAS (naive matvec fallback). Trinity SIGSEGV'd
+# inside cblas_sgemv (caught by crash trap) — BLAS interaction with our
+# 4-5 pthread setup is the suspect. Naive matvec is single-loop inline,
+# eliminates all BLAS state. Performance hit is acceptable for the medium
+# preset (E=128, L=4); ring/v1/v2 keep BLAS in their separate services.
+RUN make cavellman-cpu
 
 # Persistent state lives on the mounted volume at /data; spore goes under it.
 ENV CAVELLMAN_SPORE_DIR=/data/spore
