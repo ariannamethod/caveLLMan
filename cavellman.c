@@ -621,7 +621,16 @@ static void hebbian_update(CaveModel* m, float* last_logits, int vocab_size,
             /* Boost for emerged symbols — reinforce what the system discovered */
             if (generated[g] >= m->cooccur.total_interactions) signal *= 1.5f;
 
-            float* x_emb = m->wte->data + generated[g] * E;
+            /* Clamp the token index to the loaded wte row count, same as
+             * model_forward does. Emerged symbols can grow vocab past the
+             * .bin's V (86 + emerged), and sampling sometimes returns those
+             * emerged IDs — without the clamp hebbian_update reads past the
+             * end of wte->data and SIGSEGVs. Trinity's Molly thread emerged
+             * 6 symbols in 3s on Linux Railway and crashed exactly here. */
+            long wte_rows = m->wte->len / E;
+            int safe_id = (generated[g] >= 0 && (long)generated[g] < wte_rows)
+                ? generated[g] : 0;
+            float* x_emb = m->wte->data + (long)safe_id * E;
             float* dy = x_emb;
 
             /* Active conversation: update Q + V. Passive: V only */
