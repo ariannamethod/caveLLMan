@@ -802,6 +802,7 @@ static int      save_cave_spore(const Cave* c, const int* last_tokens,
                                 int last_len, uint64_t fingerprint);
 static float    cave_wake_impulse(Cave* c, int64_t saved_at);
 static int      blend_spores(const Cave* pa, const Cave* pb, Cave* child);
+static int      blend_affair_surface(const Cave* mate, Cave* child);
 
 /* Helper: compute this cave's weights fingerprint from the already-loaded
  * CaveModel tensors. */
@@ -965,6 +966,7 @@ static void* learner_thread(void* arg) {
     while (al->running) {
         learner_scan_dir(al, al->feed_dir, "learner", 0);           /* external drops */
         learner_scan_dir(al, al->dna_dir,  "dna",     1);           /* colony's own, with TTL */
+        learner_scan_dir(al, "dna/output/molly", "molly", 1);       /* trinity horizon voice */
         for (int i = 0; i < 10 && al->running; i++) sleep(1);
     }
     return NULL;
@@ -1658,10 +1660,7 @@ static Cave* colony_affair_with_molly(int mate_idx, const char* preset_name) {
         return NULL;
     }
 
-    int n = pa->last_len;
-    if (n > 32) n = 32;
-    memcpy(child->last_tokens, pa->last_tokens, (size_t)n * sizeof(int));
-    child->last_len = n;
+    blend_affair_surface(pa, child);
     child->spore_saved_at = (int64_t)time(NULL);
 
     child->field.immunity_ticks = NEWBORN_IMMUNITY_TICKS;
@@ -3267,6 +3266,90 @@ static int blend_spores(const Cave* pa, const Cave* pb, Cave* child) {
 
     /* CaveField: baseline_floor уже averaged в colony_mitosis; counts/mass
      * сброшены (newborn); immunity_ticks выставлен caller'ом. */
+
+    return 0;
+}
+
+static int blend_affair_surface(const Cave* mate, Cave* child) {
+    if (!mate || !child || !child->model || !child->vocab || !g_molly.model || !g_molly.vocab) return -1;
+
+    CaveModel* ma = mate->model;
+    CaveModel* mb = g_molly.model;
+    CaveModel* mc = child->model;
+
+    for (int i = 0; i < COOCCUR_SIZE; i++) {
+        for (int j = 0; j < COOCCUR_SIZE; j++) {
+            mc->cooccur.matrix[i][j] = 0.5f * (ma->cooccur.matrix[i][j] + mb->cooccur.matrix[i][j]);
+            mc->cooccur.pair_count[i][j] = (ma->cooccur.pair_count[i][j] + mb->cooccur.pair_count[i][j]) / 2;
+        }
+    }
+    mc->cooccur.total_interactions =
+        (ma->cooccur.total_interactions + mb->cooccur.total_interactions) / 2;
+    mc->cooccur.last_emergence =
+        (ma->cooccur.last_emergence + mb->cooccur.last_emergence) / 2;
+
+    int nc = 0;
+    EmergedSymbol combined[MAX_EMERGED];
+    const EmergedSymbol* src[2] = { ma->emerged, mb->emerged };
+    int n_src[2] = { ma->n_emerged, mb->n_emerged };
+    for (int s = 0; s < 2; s++) {
+        for (int i = 0; i < n_src[s] && nc < MAX_EMERGED; i++) {
+            const EmergedSymbol* e = &src[s][i];
+            int dup = -1;
+            for (int k = 0; k < nc; k++) {
+                if ((combined[k].glyph_a == e->glyph_a && combined[k].glyph_b == e->glyph_b) ||
+                    (combined[k].glyph_a == e->glyph_b && combined[k].glyph_b == e->glyph_a)) {
+                    dup = k;
+                    break;
+                }
+            }
+            if (dup >= 0) {
+                combined[dup].use_count = (combined[dup].use_count + e->use_count) / 2;
+                if (e->alive > combined[dup].alive) combined[dup].alive = e->alive;
+                combined[dup].strength = fmaxf(combined[dup].strength, e->strength);
+            } else {
+                combined[nc++] = *e;
+            }
+        }
+    }
+    if (nc > MAX_EMERGED) nc = MAX_EMERGED;
+    for (int i = 0; i < nc; i++) mc->emerged[i] = combined[i];
+    mc->n_emerged = nc;
+    for (int i = 0; i < nc; i++) {
+        int id = child->vocab->base_size + i;
+        if (id < MAX_VOCAB) {
+            strncpy(child->vocab->tokens[id], mc->emerged[i].name, 31);
+            child->vocab->tokens[id][31] = '\0';
+        }
+    }
+    child->vocab->vocab_size = child->vocab->base_size + nc;
+
+    int rank = HEBBIAN_RANK;
+    long per = (long)mc->E * rank;
+    for (int l = 0; l < mc->N_L; l++) {
+        CaveModel* src_m = (l % 2 == 0) ? ma : mb;
+        if (l >= src_m->N_L) continue;
+        Layer* dst = &mc->layers[l];
+        const Layer* sl = &src_m->layers[l];
+        if (src_m->E == mc->E) {
+            memcpy(dst->heb_A_q, sl->heb_A_q, per * sizeof(float));
+            memcpy(dst->heb_B_q, sl->heb_B_q, per * sizeof(float));
+            memcpy(dst->heb_A_v, sl->heb_A_v, per * sizeof(float));
+            memcpy(dst->heb_B_v, sl->heb_B_v, per * sizeof(float));
+        }
+    }
+
+    const int* src_tokens = mate->last_tokens;
+    int src_len = mate->last_len;
+    pthread_mutex_lock(&g_molly_lock);
+    if ((rand() % 2) && g_molly.last_len > 0) {
+        src_tokens = g_molly.last_tokens;
+        src_len = g_molly.last_len;
+    }
+    if (src_len > 32) src_len = 32;
+    if (src_len > 0) memcpy(child->last_tokens, src_tokens, (size_t)src_len * sizeof(int));
+    child->last_len = src_len;
+    pthread_mutex_unlock(&g_molly_lock);
 
     return 0;
 }
