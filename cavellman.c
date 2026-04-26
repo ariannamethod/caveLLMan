@@ -1669,7 +1669,15 @@ static Cave* colony_affair_with_molly(int mate_idx, const char* preset_name) {
         return NULL;
     }
 
-    blend_affair_surface(pa, child);
+    /* DIAG 2026-04-27: blend_affair_surface temporarily reverted to simple
+     * last_tokens copy. Trinity SIGSEGV'd post adaptive-emerge merge with
+     * cblas_sgemv complaining "parameter 2 illegal" — stack/heap corruption
+     * upstream. Bisecting between codex's surface blend and adaptive emerge.
+     * Restore blend_affair_surface once root cause is fixed. */
+    int n = pa->last_len;
+    if (n > 32) n = 32;
+    if (n > 0) memcpy(child->last_tokens, pa->last_tokens, (size_t)n * sizeof(int));
+    child->last_len = n;
     child->spore_saved_at = (int64_t)time(NULL);
 
     child->field.immunity_ticks = NEWBORN_IMMUNITY_TICKS;
