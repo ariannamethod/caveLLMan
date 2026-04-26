@@ -1669,15 +1669,25 @@ static Cave* colony_affair_with_molly(int mate_idx, const char* preset_name) {
         return NULL;
     }
 
-    /* DIAG 2026-04-27: blend_affair_surface temporarily reverted to simple
-     * last_tokens copy. Trinity SIGSEGV'd post adaptive-emerge merge with
-     * cblas_sgemv complaining "parameter 2 illegal" — stack/heap corruption
-     * upstream. Bisecting between codex's surface blend and adaptive emerge.
-     * Restore blend_affair_surface once root cause is fixed. */
-    int n = pa->last_len;
-    if (n > 32) n = 32;
-    if (n > 0) memcpy(child->last_tokens, pa->last_tokens, (size_t)n * sizeof(int));
-    child->last_len = n;
+    /* Conservative cooccur-only memetic blend; emerged/vocab/Hebbian left
+     * to grow from inherited cooccur via adaptive emerge. */
+    blend_affair_surface(pa, child);
+
+    /* last_tokens: 50/50 mate vs Molly, capped at last_tokens[] capacity. */
+    {
+        const int* src_tok = pa->last_tokens;
+        int src_len = pa->last_len;
+        pthread_mutex_lock(&g_molly_lock);
+        if ((rand() % 2) && g_molly.last_len > 0) {
+            src_tok = g_molly.last_tokens;
+            src_len = g_molly.last_len;
+        }
+        if (src_len > 32) src_len = 32;
+        if (src_len > 0)
+            memcpy(child->last_tokens, src_tok, (size_t)src_len * sizeof(int));
+        child->last_len = src_len;
+        pthread_mutex_unlock(&g_molly_lock);
+    }
     child->spore_saved_at = (int64_t)time(NULL);
 
     child->field.immunity_ticks = NEWBORN_IMMUNITY_TICKS;
@@ -3287,87 +3297,50 @@ static int blend_spores(const Cave* pa, const Cave* pb, Cave* child) {
     return 0;
 }
 
+/* Conservative affair-surface blend (2026-04-27 rewrite). The previous
+ * version blended cooccur + emerged + vocab tokens + Hebbian; the cumulative
+ * effect destabilised Trinity on Linux (Railway SIGSEGV inside cblas_sgemv
+ * after 1-2 min — heap layout in glibc malloc differs from macOS, an
+ * out-of-place write somewhere in emerged/vocab manipulation clobbered
+ * adjacent allocations). Bisect confirmed: with this function reduced to
+ * a no-op-plus-last-tokens, Trinity holds 15+ min stable.
+ *
+ * Lite version: blend ONLY the cooccur matrix + total_interactions. That
+ * gives the affair child the *substrate memory* of both parents (which
+ * pairs co-occurred how often) — and adaptive emerge on top will grow the
+ * child's own emerged composites within seconds anyway. Skipped: emerged
+ * struct copy, vocab token writeback, Hebbian (the cave_new freshly
+ * calloc'd them = clean slate). Hebbian + emerged regrow naturally from
+ * the inherited cooccur via passive learning. */
 static int blend_affair_surface(const Cave* mate, Cave* child) {
-    if (!mate || !child || !child->model || !child->vocab || !g_molly.model || !g_molly.vocab) return -1;
+    if (!mate || !child || !child->model || !child->vocab) return -1;
+    if (!g_molly.model || !g_molly.vocab) return -1;
 
     CaveModel* ma = mate->model;
     CaveModel* mb = g_molly.model;
     CaveModel* mc = child->model;
 
-    for (int i = 0; i < COOCCUR_SIZE; i++) {
-        for (int j = 0; j < COOCCUR_SIZE; j++) {
-            mc->cooccur.matrix[i][j] = 0.5f * (ma->cooccur.matrix[i][j] + mb->cooccur.matrix[i][j]);
-            mc->cooccur.pair_count[i][j] = (ma->cooccur.pair_count[i][j] + mb->cooccur.pair_count[i][j]) / 2;
+    /* Only base-glyph cooccur cells (i,j < base_size) are valid across
+     * all three caves regardless of preset / emerged divergence. Don't
+     * touch the emerged-id columns/rows — those are vocab-private. */
+    int B = child->vocab->base_size;
+    if (B > COOCCUR_SIZE) B = COOCCUR_SIZE;
+    for (int i = 0; i < B; i++) {
+        for (int j = 0; j < B; j++) {
+            mc->cooccur.matrix[i][j] =
+                0.5f * (ma->cooccur.matrix[i][j] + mb->cooccur.matrix[i][j]);
+            mc->cooccur.pair_count[i][j] =
+                (ma->cooccur.pair_count[i][j] + mb->cooccur.pair_count[i][j]) / 2;
         }
     }
     mc->cooccur.total_interactions =
         (ma->cooccur.total_interactions + mb->cooccur.total_interactions) / 2;
-    mc->cooccur.last_emergence =
-        (ma->cooccur.last_emergence + mb->cooccur.last_emergence) / 2;
+    mc->cooccur.last_emergence = mc->cooccur.total_interactions;
 
-    int nc = 0;
-    EmergedSymbol combined[MAX_EMERGED];
-    const EmergedSymbol* src[2] = { ma->emerged, mb->emerged };
-    int n_src[2] = { ma->n_emerged, mb->n_emerged };
-    for (int s = 0; s < 2; s++) {
-        for (int i = 0; i < n_src[s] && nc < MAX_EMERGED; i++) {
-            const EmergedSymbol* e = &src[s][i];
-            int dup = -1;
-            for (int k = 0; k < nc; k++) {
-                if ((combined[k].glyph_a == e->glyph_a && combined[k].glyph_b == e->glyph_b) ||
-                    (combined[k].glyph_a == e->glyph_b && combined[k].glyph_b == e->glyph_a)) {
-                    dup = k;
-                    break;
-                }
-            }
-            if (dup >= 0) {
-                combined[dup].use_count = (combined[dup].use_count + e->use_count) / 2;
-                if (e->alive > combined[dup].alive) combined[dup].alive = e->alive;
-                combined[dup].strength = fmaxf(combined[dup].strength, e->strength);
-            } else {
-                combined[nc++] = *e;
-            }
-        }
-    }
-    if (nc > MAX_EMERGED) nc = MAX_EMERGED;
-    for (int i = 0; i < nc; i++) mc->emerged[i] = combined[i];
-    mc->n_emerged = nc;
-    for (int i = 0; i < nc; i++) {
-        int id = child->vocab->base_size + i;
-        if (id < MAX_VOCAB) {
-            strncpy(child->vocab->tokens[id], mc->emerged[i].name, 31);
-            child->vocab->tokens[id][31] = '\0';
-        }
-    }
-    child->vocab->vocab_size = child->vocab->base_size + nc;
-
-    int rank = HEBBIAN_RANK;
-    long per = (long)mc->E * rank;
-    for (int l = 0; l < mc->N_L; l++) {
-        CaveModel* src_m = (l % 2 == 0) ? ma : mb;
-        if (l >= src_m->N_L) continue;
-        Layer* dst = &mc->layers[l];
-        const Layer* sl = &src_m->layers[l];
-        if (src_m->E == mc->E) {
-            memcpy(dst->heb_A_q, sl->heb_A_q, per * sizeof(float));
-            memcpy(dst->heb_B_q, sl->heb_B_q, per * sizeof(float));
-            memcpy(dst->heb_A_v, sl->heb_A_v, per * sizeof(float));
-            memcpy(dst->heb_B_v, sl->heb_B_v, per * sizeof(float));
-        }
-    }
-
-    const int* src_tokens = mate->last_tokens;
-    int src_len = mate->last_len;
-    pthread_mutex_lock(&g_molly_lock);
-    if ((rand() % 2) && g_molly.last_len > 0) {
-        src_tokens = g_molly.last_tokens;
-        src_len = g_molly.last_len;
-    }
-    if (src_len > 32) src_len = 32;
-    if (src_len > 0) memcpy(child->last_tokens, src_tokens, (size_t)src_len * sizeof(int));
-    child->last_len = src_len;
-    pthread_mutex_unlock(&g_molly_lock);
-
+    /* emerged / vocab / Hebbian — left untouched. cave_new gave the child
+     * a calloc'd zero state; adaptive emerge on the inherited cooccur will
+     * regrow composites quickly. This is *less* memetic inheritance, but
+     * stable on Linux. last_tokens handled by caller. */
     return 0;
 }
 
