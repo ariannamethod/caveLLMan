@@ -254,13 +254,22 @@ static int try_emerge_symbol(CaveModel* model, CaveVocab* vocab) {
     if (model->n_emerged >= MAX_EMERGED) return -1;
     /* Birth is free — survival is not (checked in check_symbol_survival) */
 
+    /* Adaptive threshold: young caves (low total interactions, especially
+     * affair-children whose cooccur starts near-empty) need a softer floor or
+     * the alphabet stagnates. Founders & old caves keep the disciplined 0.75.
+     * Curve: 0.40 at N=0, asymptotic to EMERGE_THRESHOLD as N → ~600. */
+    int N = co->total_interactions;
+    float adapt = 1.0f - 0.5f * expf(-(float)N / 200.0f);
+    float threshold = EMERGE_THRESHOLD * adapt;
+    if (threshold < 0.40f) threshold = 0.40f;
+
     /* Find strongest non-emerged pair */
     float best_score = 0;
     int best_a = -1, best_b = -1;
 
     for (int i = 0; i < vocab->base_size; i++) {
         for (int j = i + 1; j < vocab->base_size; j++) {
-            if (co->matrix[i][j] < EMERGE_THRESHOLD) continue;
+            if (co->matrix[i][j] < threshold) continue;
             if (co->matrix[i][j] <= best_score) continue;
 
             /* Check not already emerged */
