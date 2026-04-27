@@ -159,13 +159,26 @@ typedef struct {
     int        visit_count;
 } PredatorState;
 
-/* ── Globals (defined in cavellman_42.c, used by predator.c) ────────────── */
+typedef struct {
+    const char* feed_dir;
+    const char* dna_dir;
+    int         running;
+    int         files_consumed;
+    int         lines_learned;
+    pthread_mutex_t lock;
+} AsyncLearner;
+
+/* ── Globals (defined in cavellman_42.c, used by predator.c / trinity.c) ─ */
 extern Cave* g_colony[COLONY_MAX];
 extern int   g_colony_n;
 extern int   g_children_born;
 extern int   g_mitosis_cooldown;
+extern volatile int g_async_running;
 
 extern MollyState     g_molly;
+extern pthread_mutex_t g_molly_lock;
+extern AsyncLearner   g_learner;
+
 extern PredatorState  g_predator;
 extern int   g_predator_storm_ticks_left;
 extern int   g_predator_storm_duration;
@@ -178,8 +191,20 @@ int   copy_file(const char* src, const char* dst);
 Cave* cave_new(const char* name, float baseline_floor,
                const char* weights_path, const char* preset_name);
 int   colony_add(Cave* c);
+Cave* colony_mitosis(const Cave* pa, const Cave* pb, const char* preset_name);
+void  dna_write_cave(const Cave* c, const int* tokens, int n_tokens);
+int   dual_generate(CaveModel* m, CaveVocab* vocab,
+                    const int* prompt, int prompt_len,
+                    int max_gen, float temp, float top_p,
+                    int* out, int out_cap);
+/* semtok_find_glyph is a header-only static helper from semantic_tokenizer.h;
+ * each module includes that header directly when needed (no extern). */
 
-/* Predator module API (defined in predator.c, called from orchestrator). */
+/* Predator module API (defined in predator.c). */
 void  try_predator_storm(const char* preset_name);
+
+/* Trinity module API (defined in trinity.c). */
+void  colony_try_mitosis_trinity(const char* preset_name);
+void* molly_thread_main(void* arg);
 
 #endif /* CAVELLMAN_42_H */

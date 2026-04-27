@@ -46,9 +46,9 @@ cavellman: cavellman.c ariannamethod/notorch.c ariannamethod/notorch.h
 # 42/ — gravitational-dispatch fork (real sibling, not CLI flag).
 # Modular split: cavellman_42.c (engine + ring + trinity) + predator.c
 # (storm engine), shared types + extern API in 42/cavellman_42.h.
-cavellman_42: 42/cavellman_42.c 42/predator.c 42/cavellman_42.h ariannamethod/notorch.c ariannamethod/notorch.h
-	$(CC) $(CFLAGS) -Iariannamethod -I42 -o cavellman_42 42/cavellman_42.c 42/predator.c ariannamethod/notorch.c -lm -lpthread $(BLAS_FLAGS)
-	@echo "Compiled: cavellman_42 (gravity-dispatch fork, modular + $(BLAS_NAME))"
+cavellman_42: 42/cavellman_42.c 42/predator.c 42/trinity.c 42/cavellman_42.h ariannamethod/notorch.c ariannamethod/notorch.h
+	$(CC) $(CFLAGS) -Iariannamethod -I42 -o cavellman_42 42/cavellman_42.c 42/predator.c 42/trinity.c ariannamethod/notorch.c -lm -lpthread $(BLAS_FLAGS)
+	@echo "Compiled: cavellman_42 (gravity-dispatch fork, modular: core + predator + trinity + $(BLAS_NAME))"
 
 cavellman-cpu: cavellman.c ariannamethod/notorch.c ariannamethod/notorch.h
 	$(CC) $(CFLAGS) -Iariannamethod -o cavellman cavellman.c ariannamethod/notorch.c -lm -lpthread
