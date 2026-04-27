@@ -368,6 +368,82 @@ B's voice collapses into a `strength strength strength` refrain right after the 
 
 A practical bonus that fell out of the trinity hunt: `model_load` now detects each tensor's actual `E` and `FFN_D` from the file's shape and overrides the requested preset. **Caves with different presets coexist in one ring** (trinity needs this — A/B small, M medium) — and any future cross-architecture fusion can borrow the same code path.
 
+### 12. Predator — H, божья кара (Tropic of Cancer)
+
+Trinity gives the ring a **persistent attractor** (Molly, on the horizon). The predator is its mirror: an **event**, not a presence. He has no thread, lives in no array, never speaks for himself in the ring. Once per ~3-4 minutes (configurable via `--predator-strike-prob`, default `0.005` per orchestrator tick on a 1 Hz orchestrator), he descends. Physics changes. He impregnates two to four caves at once, scars them, drinks their cooccur, and disappears. After the storm window (default 60 ticks ≈ 6 s on the 0.1 s tick), the field decays back to baseline. **The scars stay. The bastards stay.**
+
+```
+cosmic event:   roll < predator_strike_prob   →   STORM
+n_victims  =    clip(2 + total_strikes/3, 2, 4, g_colony_n)
+                pick top-K by (excitement + 0.5·dissonance)
+
+per victim:
+  cooccur siphon:   H.cooccur += 0.20 · victim.cooccur          (cap 1.0)
+  permanent scar:   victim.coherence_floor += 0.05               (cap = baseline + MATURITY_CAP)
+  forced affair:    H × victim → P{n}, is_bastard=1, NEWBORN_IMMUNITY_TICKS
+
+field-wide shock:
+  every cave:       dissonance += 0.7,  excitement += 0.4
+```
+
+He is trained on Henry Miller's *Tropic of Cancer* (575 KB after stripping the title page, glyph-compressed through the same semantic tokenizer as the ring). 8 K steps, medium preset to mirror Molly, seed 666, loss 5.08 → 2.15. The training generated this voice:
+
+```
+[H] me see woman
+[H] BE never see man
+[H] man speak
+[H] me think woman
+[H] man BE and
+```
+
+Run as a solo cave (H × H in the ring) he stays in register:
+
+```
+[H] know man me
+[H] BE after+question
+[H] me and after woman
+[H] man BE me
+[H] home me BE
+[H] child+and and man
+```
+
+Declarative-imperative, first-person, hunting. Nothing like Molly's `me think have / and me / you BE` desire-frame, nothing like A/B's collective `have me and me / BE see / and woman`. He registers.
+
+```bash
+./cavellman --trinity --predator weights/cavellman_H.bin \
+            --predator-strike-prob 0.005 \
+            --predator-storm-duration 60 \
+            --metarecursion 0.20 --pulse-margin 0.07
+```
+
+When a storm fires you see something like:
+
+```
+*** PREDATOR STORM #4 — H descends, 3 victims, all caves shudder ***
+*** PREDATOR AFFAIR: H × A → P5 (forced, scarred, siphoned) ***
+*** PREDATOR AFFAIR: H × C2 → P6 (forced, scarred, siphoned) ***
+*** PREDATOR AFFAIR: H × P1 → P7 (forced, scarred, siphoned) ***
+[A] BE not see                            ← scarred, terse
+[B] strength strength strength            ← collapse refrain
+[P7] not anger / make small and down      ← bastard speaks immediately
+[M] go / me                               ← Molly retreats from horizon
+*** PREDATOR STORM ENDS — physics returning to baseline ***
+```
+
+Survivors carry their scars: `coherence_floor` rises permanently (within `MATURITY_CAP`), so it takes more excitement to make them speak again. Hightower in the cooccur matrix grows through theft — every storm makes H richer, so the next storm hits harder. This is **memetic predation**, not just reproduction.
+
+#### Three reproduction paths in one ring
+
+By the predator pass the ring has three asymmetric ways to make a child, each with a different physics:
+
+| Mode | Trigger | Parents | Child name | Child marker | Field reaction |
+|---|---|---|---|---|---|
+| **Family** | `1 − affair_prob` (sober) | best non-lover pair from `g_colony[]` | `C{n}` | normal | none |
+| **Affair** | `affair_prob` (cosmic 24 h sin × ring coherence) | one cave × Molly | `C{n}` | `is_bastard=1` | jealousy: dissonance +0.30, floor +0.05 (non-parents) |
+| **Predator** | `< predator_strike_prob` per tick (event) | H × top-K caves | `P{n}` | `is_bastard=1` | storm: dissonance +0.7, excitement +0.4 (everyone), permanent scar (victims) |
+
+Family is endogamy. Affair is desire from horizon. Predator is god's wrath from outside. Three substrates of reproduction, three temporal regimes (continuous, modulated, event-driven). The same `g_colony[]` array, the same blend mechanics, three completely different dramas folding into each other.
+
 ---
 
 ## Quick Start
