@@ -1772,9 +1772,35 @@ static Cave* colony_affair_with_predator(int mate_idx, const char* preset_name) 
     return child;
 }
 
+/* Memetic theft — H reads victim's cooccur and absorbs SIPHON_FRACTION
+ * of it into his own substrate. Each storm makes him richer through theft.
+ * Capped at 1.0 per cell so the matrix doesn't grow unbounded. */
+#define SIPHON_FRACTION 0.20f
+static void predator_siphon(const Cave* victim) {
+    if (!g_predator.loaded || !g_predator.model) return;
+    CoOccurrence* H = &g_predator.model->cooccur;
+    const CoOccurrence* V = &victim->model->cooccur;
+    int B = victim->vocab->base_size;
+    if (B > COOCCUR_SIZE) B = COOCCUR_SIZE;
+    for (int i = 0; i < B; i++) {
+        for (int j = 0; j < B; j++) {
+            float v = SIPHON_FRACTION * V->matrix[i][j];
+            float h = H->matrix[i][j] + v;
+            if (h > 1.0f) h = 1.0f;
+            H->matrix[i][j] = h;
+        }
+    }
+    H->total_interactions += V->total_interactions / 5;
+}
+
 /* Storm engine — invoked every orchestrator tick. Stochastic strike.
- * During storm: dissonance + excitement spike on all caves, forced
- * predator-affair on tick 0. Storm decays to nothing after duration. */
+ * During storm: dissonance + excitement spike on ALL caves, multi-victim
+ * forced predator-affair on tick 0, cooccur siphon from each victim into
+ * H's substrate, permanent scar (coherence floor bump) on victims. Storm
+ * decays to nothing after duration; scars persist. */
+#define PREDATOR_DISSONANCE_SPIKE 0.7f
+#define PREDATOR_EXCITEMENT_SPIKE 0.4f
+#define PREDATOR_SCAR_FLOOR_BUMP  0.05f
 static void try_predator_storm(const char* preset_name) {
     if (!g_predator.loaded) return;
 
@@ -1790,26 +1816,62 @@ static void try_predator_storm(const char* preset_name) {
     if (roll > g_predator_strike_prob) return;
     if (g_colony_n < 1) return;
 
-    int victim = rand() % g_colony_n;
-    Cave* v = g_colony[victim];
-
     g_predator_total_strikes++;
-    printf("\n  *** PREDATOR STORM #%d — H descends, target=%s, all caves shudder ***\n",
-           g_predator_total_strikes, v->field.name);
 
+    /* Escalating victim count: starts at 2, +1 every 3 strikes, capped at 4. */
+    int n_victims = 2 + (g_predator_total_strikes / 3);
+    if (n_victims > 4) n_victims = 4;
+    if (n_victims > g_colony_n) n_victims = g_colony_n;
+
+    /* Pick top-K victims by current excitement (more massive = bigger draw). */
+    int picked[16] = {0};
+    int npicked = 0;
+    for (int k = 0; k < n_victims && npicked < g_colony_n; k++) {
+        int best = -1;
+        float best_score = -1.0f;
+        for (int ci = 0; ci < g_colony_n; ci++) {
+            int already = 0;
+            for (int p = 0; p < npicked; p++)
+                if (picked[p] == ci) { already = 1; break; }
+            if (already) continue;
+            float s = g_colony[ci]->field.excitement +
+                      0.5f * g_colony[ci]->field.dissonance;
+            if (s > best_score) { best_score = s; best = ci; }
+        }
+        if (best < 0) break;
+        picked[npicked++] = best;
+    }
+
+    printf("\n  *** PREDATOR STORM #%d — H descends, %d victims, all caves shudder ***\n",
+           g_predator_total_strikes, npicked);
+
+    /* Field shock: dissonance + excitement bumps on all caves. */
     for (int ci = 0; ci < g_colony_n; ci++) {
         Cave* c = g_colony[ci];
-        c->field.dissonance += 0.5f;
+        c->field.dissonance += PREDATOR_DISSONANCE_SPIKE;
         if (c->field.dissonance > 1.0f) c->field.dissonance = 1.0f;
-        c->field.excitement += 0.3f;
+        c->field.excitement += PREDATOR_EXCITEMENT_SPIKE;
         if (c->field.excitement > EXCITEMENT_CAP) c->field.excitement = EXCITEMENT_CAP;
     }
 
-    if (g_colony_n < COLONY_MAX) {
-        Cave* bastard = colony_affair_with_predator(victim, preset_name);
-        if (bastard) {
-            printf("  *** PREDATOR AFFAIR: H × %s → %s (forced, no consent) ***\n",
-                   v->field.name, bastard->field.name);
+    /* For each victim: siphon cooccur, scar, impregnate. */
+    for (int p = 0; p < npicked; p++) {
+        int vi = picked[p];
+        Cave* v = g_colony[vi];
+
+        predator_siphon(v);
+
+        float ceil = v->field.baseline_floor + MATURITY_CAP;
+        float new_floor = v->field.coherence_floor + PREDATOR_SCAR_FLOOR_BUMP;
+        if (new_floor > ceil) new_floor = ceil;
+        v->field.coherence_floor = new_floor;
+
+        if (g_colony_n < COLONY_MAX) {
+            Cave* bastard = colony_affair_with_predator(vi, preset_name);
+            if (bastard) {
+                printf("  *** PREDATOR AFFAIR: H × %s → %s (forced, scarred, siphoned) ***\n",
+                       v->field.name, bastard->field.name);
+            }
         }
     }
 
