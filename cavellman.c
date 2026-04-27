@@ -1559,6 +1559,32 @@ static MollyState g_molly = {0};
 static pthread_mutex_t g_molly_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* ───────────────────────────────────────────────────────────────────────
+ * Predator (--predator weights/cavellman_H.bin) — НЕ persistent founder
+ * и НЕ Molly-style horizon. Predator является как божья кара: на каждый
+ * orchestrator tick с вероятностью g_predator_strike_prob запускается
+ * "storm" длительностью g_predator_storm_duration tick'ов. Во время storm:
+ *  - dissonance ВСЕХ caves +0.5 (terror in the field)
+ *  - forced affair-mitosis: predator × random cave → bastard
+ *    (`is_bastard`=1, surrounding caves get jealousy +0.30 как Molly affair)
+ *  - speak gates loosened для всех (excitement spike +0.3)
+ * После storm — линейный decay dissonance/excitement, физика возвращается.
+ * Predator не говорит сам — он просто проходит и уходит.
+ * Trained на Тропике Рака Henry Miller (same medium preset as Molly). */
+typedef struct {
+    CaveModel* model;
+    CaveVocab* vocab;
+    char       weights_path[512];
+    int        loaded;
+    int        visit_count;
+} PredatorState;
+
+static PredatorState g_predator = {0};
+static int   g_predator_storm_ticks_left = 0;
+static int   g_predator_storm_duration   = 60;   /* ~6 sec at 0.1s tick */
+static float g_predator_strike_prob      = 0.005f; /* ~0.5% per orch tick */
+static int   g_predator_total_strikes    = 0;
+
+/* ───────────────────────────────────────────────────────────────────────
  * Trinity-mode mitosis (--trinity flag in async only). Two reproduction
  * paths chosen by AML-style physics:
  *  - family-mode: best non-bastard pair from g_colony[]. Sober.
@@ -1696,6 +1722,99 @@ static Cave* colony_affair_with_molly(int mate_idx, const char* preset_name) {
     colony_add(child);
     g_children_born++;
     return child;
+}
+
+/* Predator-affair: H × victim → bastard `P{n}`. Same blend mechanics as
+ * Molly's affair but with g_predator's weights. Storm engine triggers it. */
+static Cave* colony_affair_with_predator(int mate_idx, const char* preset_name) {
+    if (mate_idx < 0 || mate_idx >= g_colony_n) return NULL;
+    if (g_colony_n >= COLONY_MAX) return NULL;
+    if (!g_predator.loaded || !g_predator.model) return NULL;
+
+    Cave* pa = g_colony[mate_idx];
+
+    char child_name[16];
+    snprintf(child_name, sizeof(child_name), "P%d", g_predator.visit_count + 1);
+
+    char child_w[512], child_v[512], child_j[512];
+    char parent_v[512], parent_j[512];
+    snprintf(child_w, sizeof(child_w), "weights/cavellman_predator_%s.bin", child_name);
+    snprintf(child_v, sizeof(child_v), "%s.vocab", child_w);
+    snprintf(child_j, sizeof(child_j), "%s.json",  child_w);
+    snprintf(parent_v, sizeof(parent_v), "%s.vocab", pa->field.weights_path);
+    snprintf(parent_j, sizeof(parent_j), "%s.json",  pa->field.weights_path);
+
+    if (blend_weights(pa->field.weights_path, g_predator.weights_path, child_w) != 0) {
+        printf("  [strike] blend_weights failed for %s × Predator → %s\n",
+               pa->field.name, child_w);
+        return NULL;
+    }
+    copy_file(parent_v, child_v);
+    copy_file(parent_j, child_j);
+
+    /* Bastard's baseline floor — middle between victim and predator (0.20). */
+    float child_baseline = 0.5f * (pa->field.baseline_floor + 0.20f);
+    char* permanent_name = strdup(child_name);
+    Cave* child = cave_new(permanent_name, child_baseline, child_w, preset_name);
+    if (!child) { free(permanent_name); return NULL; }
+
+    int n = pa->last_len;
+    if (n > 32) n = 32;
+    if (n > 0) memcpy(child->last_tokens, pa->last_tokens, (size_t)n * sizeof(int));
+    child->last_len = n;
+    child->spore_saved_at = (int64_t)time(NULL);
+    child->field.immunity_ticks = NEWBORN_IMMUNITY_TICKS;
+    child->is_bastard = 1;
+
+    colony_add(child);
+    g_children_born++;
+    g_predator.visit_count++;
+    return child;
+}
+
+/* Storm engine — invoked every orchestrator tick. Stochastic strike.
+ * During storm: dissonance + excitement spike on all caves, forced
+ * predator-affair on tick 0. Storm decays to nothing after duration. */
+static void try_predator_storm(const char* preset_name) {
+    if (!g_predator.loaded) return;
+
+    if (g_predator_storm_ticks_left > 0) {
+        g_predator_storm_ticks_left--;
+        if (g_predator_storm_ticks_left == 0) {
+            printf("\n  *** PREDATOR STORM ENDS — physics returning to baseline ***\n\n");
+        }
+        return;
+    }
+
+    float roll = (float)rand() / (float)RAND_MAX;
+    if (roll > g_predator_strike_prob) return;
+    if (g_colony_n < 1) return;
+
+    int victim = rand() % g_colony_n;
+    Cave* v = g_colony[victim];
+
+    g_predator_total_strikes++;
+    printf("\n  *** PREDATOR STORM #%d — H descends, target=%s, all caves shudder ***\n",
+           g_predator_total_strikes, v->field.name);
+
+    for (int ci = 0; ci < g_colony_n; ci++) {
+        Cave* c = g_colony[ci];
+        c->field.dissonance += 0.5f;
+        if (c->field.dissonance > 1.0f) c->field.dissonance = 1.0f;
+        c->field.excitement += 0.3f;
+        if (c->field.excitement > EXCITEMENT_CAP) c->field.excitement = EXCITEMENT_CAP;
+    }
+
+    if (g_colony_n < COLONY_MAX) {
+        Cave* bastard = colony_affair_with_predator(victim, preset_name);
+        if (bastard) {
+            printf("  *** PREDATOR AFFAIR: H × %s → %s (forced, no consent) ***\n",
+                   v->field.name, bastard->field.name);
+        }
+    }
+
+    g_predator_storm_ticks_left = g_predator_storm_duration;
+    g_mitosis_cooldown = MITOSIS_COOLDOWN_TICKS;
 }
 
 static void colony_try_mitosis_trinity(const char* preset_name) {
@@ -2665,6 +2784,13 @@ static void* orchestrator_thread_main(void* arg) {
         int colony_n_before = g_colony_n;
         if (g_trinity_mode) colony_try_mitosis_trinity(preset_name);
         else                colony_try_mitosis(preset_name);
+
+        /* Predator storm engine — runs every orchestrator tick when --predator
+         * is loaded. Storm is event-driven, not persistent: with small
+         * probability per tick we spawn a "storm" that lasts N ticks and
+         * does forced affair-mitosis + dissonance spike + excitement kick.
+         * After storm: physics decays back to baseline. */
+        try_predator_storm(preset_name);
         for (int ci = colony_n_before; ci < g_colony_n; ci++) {
             if (g_cave_thread_started[ci]) continue;
             g_cave_thread_args[ci].cave = g_colony[ci];
@@ -3408,6 +3534,11 @@ int main(int argc, char** argv) {
         else if (strcmp(argv[i], "--pulse-margin") == 0 && i+1 < argc) g_pulse_margin = (float)atof(argv[++i]);
         else if (strcmp(argv[i], "--trinity") == 0) { async_mode = 1; g_trinity_mode = 1; }
         else if (strcmp(argv[i], "--weights-m") == 0 && i+1 < argc) weights_m = argv[++i];
+        else if (strcmp(argv[i], "--predator") == 0 && i+1 < argc) {
+            strncpy(g_predator.weights_path, argv[++i], sizeof(g_predator.weights_path) - 1);
+        }
+        else if (strcmp(argv[i], "--predator-strike-prob") == 0 && i+1 < argc) g_predator_strike_prob = (float)atof(argv[++i]);
+        else if (strcmp(argv[i], "--predator-storm-duration") == 0 && i+1 < argc) g_predator_storm_duration = atoi(argv[++i]);
         else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             printf("cavellman — self-evolving hieroglyphic language model (dual-only)\n\n");
             printf("  --weights FILE         Shared weights for both engines\n");
@@ -3477,6 +3608,22 @@ int main(int argc, char** argv) {
 
         printf("[trinity] Molly loaded — lives on the horizon (own pthread, dna/output/molly/)\n");
         printf("[trinity] pre-tension: A.diss=0.15, B.diss=0.15\n");
+    }
+
+    /* Predator loader (optional): loaded if --predator <file> passed. He has
+     * NO thread; storm engine in orchestrator triggers visits stochastically. */
+    if (g_predator.weights_path[0] != '\0') {
+        Cave* H_loader = cave_new("H", 0.20f, g_predator.weights_path, preset_name);
+        if (!H_loader) {
+            printf("[predator] failed to load %s — running without predator\n", g_predator.weights_path);
+        } else {
+            g_predator.model = H_loader->model;
+            g_predator.vocab = H_loader->vocab;
+            g_predator.loaded = 1;
+            free(H_loader); /* keep model + vocab */
+            printf("[predator] H loaded (Tropic of Cancer, Henry Miller) — strike_prob=%.4f storm_duration=%d ticks\n",
+                   g_predator_strike_prob, g_predator_storm_duration);
+        }
     }
 
     if (async_mode)

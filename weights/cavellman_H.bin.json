@@ -1,0 +1,13 @@
+{
+  "preset": "medium",
+  "embd": 128,
+  "heads": 8,
+  "layers": 4,
+  "ctx": 128,
+  "vocab_size": 88,
+  "params": 826752,
+  "steps": 8000,
+  "final_loss": 2.1236,
+  "dataset": "data/miller.txt",
+  "seed": 666
+}
