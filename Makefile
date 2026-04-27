@@ -43,6 +43,11 @@ cavellman: cavellman.c ariannamethod/notorch.c ariannamethod/notorch.h
 	$(CC) $(CFLAGS) -Iariannamethod -o cavellman cavellman.c ariannamethod/notorch.c -lm -lpthread $(BLAS_FLAGS)
 	@echo "Compiled: cavellman (dual ring + Hebbian + async learner + $(BLAS_NAME))"
 
+# 42/ — gravitational-dispatch fork (real sibling, not CLI flag).
+cavellman_42: 42/cavellman_42.c ariannamethod/notorch.c ariannamethod/notorch.h
+	$(CC) $(CFLAGS) -Iariannamethod -o cavellman_42 42/cavellman_42.c ariannamethod/notorch.c -lm -lpthread $(BLAS_FLAGS)
+	@echo "Compiled: cavellman_42 (gravity-dispatch fork + $(BLAS_NAME))"
+
 cavellman-cpu: cavellman.c ariannamethod/notorch.c ariannamethod/notorch.h
 	$(CC) $(CFLAGS) -Iariannamethod -o cavellman cavellman.c ariannamethod/notorch.c -lm -lpthread
 	@echo "Compiled: cavellman (dual ring + Hebbian + async learner, no BLAS)"
