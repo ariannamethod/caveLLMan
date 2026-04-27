@@ -17,6 +17,7 @@
 
 #include "notorch.h"
 #include "semantic_tokenizer.h"
+#include "cavellman_42.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -87,35 +88,12 @@ static const char* smaller_preset_name(const char* pname) {
 
 /* ── Vocab (base 88 + emerged) ──────────────────────────────────────────── */
 
-typedef struct {
-    char tokens[MAX_VOCAB][32];
-    int  vocab_size;      /* total (base + emerged) */
-    int  base_size;       /* original 88 */
-    int  bos_id;
-    int  mask_id;
-} CaveVocab;
 
 /* ── Co-occurrence matrix (Hebbian surface layer) ───────────────────────── */
 
-typedef struct {
-    float matrix[COOCCUR_SIZE][COOCCUR_SIZE];   /* symmetric, decay 0.95/session */
-    int   pair_count[COOCCUR_SIZE][COOCCUR_SIZE]; /* raw counts */
-    int   total_interactions;
-    int   last_emergence;   /* interaction count at last symbol creation */
-} CoOccurrence;
 
 /* ── Emerged symbol ─────────────────────────────────────────────────────── */
 
-typedef struct {
-    int  glyph_a;           /* first component glyph id */
-    int  glyph_b;           /* second component glyph id */
-    float strength;         /* co-occurrence strength at time of emergence */
-    int  born_at;           /* interaction number */
-    int  use_count;         /* times used since birth */
-    int  alive;             /* 0 = dead (failed survival), 1 = alive, 2 = frozen (primitive) */
-    int  depth;             /* 1 = base pair, 2+ = chain */
-    char name[32];          /* auto-generated name: "glyph_a+glyph_b" */
-} EmergedSymbol;
 
 #define SURVIVAL_USES    5    /* must be used 5 times... */
 #define SURVIVAL_WINDOW  500  /* ...within 500 interactions of birth, or die */
@@ -123,34 +101,7 @@ typedef struct {
 
 /* ── Model ──────────────────────────────────────────────────────────────── */
 
-typedef struct {
-    nt_tensor *rms1, *wq, *wk, *wv, *wo;
-    nt_tensor *rms2, *w_fc1, *w_fc2;
-    /* Hebbian LoRA adapters (per-layer) */
-    float *heb_A_q, *heb_B_q;  /* [E×rank], [rank×E] */
-    float *heb_A_v, *heb_B_v;
-} Layer;
 
-typedef struct {
-    nt_tensor* wte;
-    nt_tensor* wpe;
-    Layer*     layers;
-    nt_tensor* rms_f;
-    nt_tensor* head;
-
-    /* Per-cave architecture — caves in the colony can have different
-     * sizes (smaller children grow out of same-size parents via mitosis
-     * downsize). Every model_forward call swaps the global dim vars to
-     * these values on entry so the existing helpers keep working. */
-    int E, H, HD, FFN_D, N_L, CTX;
-
-    /* Hebbian state */
-    CoOccurrence cooccur;
-    EmergedSymbol emerged[MAX_EMERGED];
-    int n_emerged;
-    float hebbian_lr;
-    float hebbian_decay;
-} CaveModel;
 
 /* Helper: push/pop the global dim vars from a model. Every hot path
  * that reads E/N_L/... starts with DIMS_ENTER(m) and exits via
@@ -758,48 +709,10 @@ static int tokenize_prompt(const char* input, CaveVocab* vocab, int* tokens, int
 #define DNA_DIR      "dna"
 #define DNA_MAX_AGE  3600     /* seconds — older .txt files in dna/ expire */
 
-typedef struct {
-    float excitement;
-    float coherence_floor;
-    float baseline_floor;
-    float dissonance;
-    int   spoke_count;
-    int   total_count;
-    const char* name;
 
-    /* Mass threshold CPT (Arianna-style) */
-    long  mass_bytes;
-    float mass_novelty;
-    float mass_resonance;
-    char  holding_path[512];    /* feed/<name>_holding.txt */
-    char  weights_path[512];    /* current on-disk .bin for --start-from */
-    char  next_weights_path[512]; /* where child will save */
-    const char* preset_name;    /* pass to child */
-    int   microtrain_active;
-    pid_t microtrain_pid;
-    int   microtrain_done_count;
 
-    /* Pressure death: newborns get N ticks of immunity so they're not
-     * culled before having a chance to prove themselves in the ring. */
-    int   immunity_ticks;
-} CaveField;
-
-typedef struct {
-    CaveModel* model;
-    CaveVocab* vocab;
-    CaveField  field;
-    int        owns_vocab;
-    int        is_founder;   /* A and B (and M in trinity mode) — shielded from pressure death forever */
-    int        is_lover;     /* Molly — physically a founder in ring, semantically "external desire". */
-    int        is_bastard;   /* Born of cross-mitosis lover × non-lover. Triggers jealousy field event. */
-    /* Persistence — "yesterday" on this cave's mind */
-    int     last_tokens[32]; /* what was on mind when cave slept; 32 = CAVE_LAST_TOKENS */
-    int     last_len;        /* 0..32 */
-    int64_t spore_saved_at;  /* 0 for cold-start cave, else header timestamp */
-} Cave;
-
-static Cave* g_colony[COLONY_MAX];
-static int   g_colony_n = 0;
+Cave* g_colony[COLONY_MAX];
+int   g_colony_n = 0;
 
 /* Forward declarations for the persistence layer (defined just above main).
  * cave_new / colony_main / colony_mitosis call these to hydrate / save /
@@ -1041,7 +954,7 @@ static void field_init(CaveField* f, const char* name, float baseline,
  * of caves so the ring can grow through mitosis and shrink under pressure.
  * The two founders (A and B) go through cave_new just like any child.
  */
-static Cave* cave_new(const char* name, float baseline,
+Cave* cave_new(const char* name, float baseline,
                       const char* weights_path, const char* preset_name) {
     const Preset* pr = find_preset(preset_name);
     if (!pr) {
@@ -1108,7 +1021,7 @@ static void cave_free(Cave* c) {
     free(c);
 }
 
-static int colony_add(Cave* c) {
+int colony_add(Cave* c) {
     if (!c || g_colony_n >= COLONY_MAX) return -1;
     g_colony[g_colony_n++] = c;
     return g_colony_n - 1;
@@ -1148,8 +1061,8 @@ static void colony_remove(int idx) {
 #define MITOSIS_MIN_TOTAL_TURNS  120   /* and taken ≥120 turns in the ring */
 #define NEWBORN_IMMUNITY_TICKS   800   /* child cannot be culled for its first N ticks */
 
-static int g_mitosis_cooldown = 0;
-static int g_children_born    = 0;
+int g_mitosis_cooldown = 0;
+int g_children_born    = 0;
 
 /* Fitness score — higher = more likely to be picked as a parent,
  * and less likely to be culled under pressure. Age contributes both
@@ -1170,7 +1083,7 @@ static float cave_fitness(const Cave* c) {
 
 /* Load both parent .bin files, blend them layer-wise, write the child
  * tensor set to path_out. Returns 0 on success, -1 on failure. */
-static int blend_weights(const char* path_a, const char* path_b, const char* path_out) {
+int blend_weights(const char* path_a, const char* path_b, const char* path_out) {
     int n_a = 0, n_b = 0;
     nt_tensor** ta = nt_load(path_a, &n_a);
     nt_tensor** tb = nt_load(path_b, &n_b);
@@ -1345,7 +1258,7 @@ static int blend_weights_downsized(const char* path_a, const char* path_b,
 }
 
 /* Copy a binary file byte-for-byte (for child's .vocab and .bin.json). */
-static int copy_file(const char* src, const char* dst) {
+int copy_file(const char* src, const char* dst) {
     FILE* fi = fopen(src, "rb");
     if (!fi) return -1;
     FILE* fo = fopen(dst, "wb");
@@ -1539,23 +1452,9 @@ static void colony_try_mitosis(const char* preset_name) {
         g_mitosis_cooldown = MITOSIS_COOLDOWN_TICKS;
 }
 
-/* MollyState — Molly lives outside the colony as a horizon-goroutine.
- * Her own pthread runs molly_thread_main, generating utterances and
- * writing them to dna/output/molly/ where the existing learner picks
- * them up and feeds every cave passively. Affair mitosis blends a
- * cave's weights with g_molly.weights_path directly. */
-typedef struct {
-    CaveModel* model;
-    CaveVocab* vocab;
-    char       weights_path[512];
-    int        last_tokens[32];
-    int        last_len;
-    pthread_t  thread;
-    int        started;
-    int        utter_count;
-} MollyState;
-
-static MollyState g_molly = {0};
+/* MollyState typedef in cavellman_42.h. Definitions live here so
+ * predator.c can extern them through the header. */
+MollyState g_molly = {0};
 static pthread_mutex_t g_molly_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* ───────────────────────────────────────────────────────────────────────
@@ -1570,19 +1469,11 @@ static pthread_mutex_t g_molly_lock = PTHREAD_MUTEX_INITIALIZER;
  * После storm — линейный decay dissonance/excitement, физика возвращается.
  * Predator не говорит сам — он просто проходит и уходит.
  * Trained на Тропике Рака Henry Miller (same medium preset as Molly). */
-typedef struct {
-    CaveModel* model;
-    CaveVocab* vocab;
-    char       weights_path[512];
-    int        loaded;
-    int        visit_count;
-} PredatorState;
-
-static PredatorState g_predator = {0};
-static int   g_predator_storm_ticks_left = 0;
-static int   g_predator_storm_duration   = 60;   /* ~6 sec at 0.1s tick */
-static float g_predator_strike_prob      = 0.005f; /* ~0.5% per orch tick */
-static int   g_predator_total_strikes    = 0;
+/* PredatorState typedef + g_predator + storm globals are now defined in
+ * predator.c; we use them here via extern declarations in cavellman_42.h.
+ * Storm engine itself (try_predator_storm, colony_affair_with_predator,
+ * predator_siphon) lives in predator.c — invoked from the orchestrator
+ * after the trinity-mitosis attempt. */
 
 /* ───────────────────────────────────────────────────────────────────────
  * Trinity-mode mitosis (--trinity flag in async only). Two reproduction
@@ -1724,160 +1615,6 @@ static Cave* colony_affair_with_molly(int mate_idx, const char* preset_name) {
     return child;
 }
 
-/* Predator-affair: H × victim → bastard `P{n}`. Same blend mechanics as
- * Molly's affair but with g_predator's weights. Storm engine triggers it. */
-static Cave* colony_affair_with_predator(int mate_idx, const char* preset_name) {
-    if (mate_idx < 0 || mate_idx >= g_colony_n) return NULL;
-    if (g_colony_n >= COLONY_MAX) return NULL;
-    if (!g_predator.loaded || !g_predator.model) return NULL;
-
-    Cave* pa = g_colony[mate_idx];
-
-    char child_name[16];
-    snprintf(child_name, sizeof(child_name), "P%d", g_predator.visit_count + 1);
-
-    char child_w[512], child_v[512], child_j[512];
-    char parent_v[512], parent_j[512];
-    snprintf(child_w, sizeof(child_w), "weights/cavellman_predator_%s.bin", child_name);
-    snprintf(child_v, sizeof(child_v), "%s.vocab", child_w);
-    snprintf(child_j, sizeof(child_j), "%s.json",  child_w);
-    snprintf(parent_v, sizeof(parent_v), "%s.vocab", pa->field.weights_path);
-    snprintf(parent_j, sizeof(parent_j), "%s.json",  pa->field.weights_path);
-
-    if (blend_weights(pa->field.weights_path, g_predator.weights_path, child_w) != 0) {
-        printf("  [strike] blend_weights failed for %s × Predator → %s\n",
-               pa->field.name, child_w);
-        return NULL;
-    }
-    copy_file(parent_v, child_v);
-    copy_file(parent_j, child_j);
-
-    /* Bastard's baseline floor — middle between victim and predator (0.20). */
-    float child_baseline = 0.5f * (pa->field.baseline_floor + 0.20f);
-    char* permanent_name = strdup(child_name);
-    Cave* child = cave_new(permanent_name, child_baseline, child_w, preset_name);
-    if (!child) { free(permanent_name); return NULL; }
-
-    int n = pa->last_len;
-    if (n > 32) n = 32;
-    if (n > 0) memcpy(child->last_tokens, pa->last_tokens, (size_t)n * sizeof(int));
-    child->last_len = n;
-    child->spore_saved_at = (int64_t)time(NULL);
-    child->field.immunity_ticks = NEWBORN_IMMUNITY_TICKS;
-    child->is_bastard = 1;
-
-    colony_add(child);
-    g_children_born++;
-    g_predator.visit_count++;
-    return child;
-}
-
-/* Memetic theft — H reads victim's cooccur and absorbs SIPHON_FRACTION
- * of it into his own substrate. Each storm makes him richer through theft.
- * Capped at 1.0 per cell so the matrix doesn't grow unbounded. */
-#define SIPHON_FRACTION 0.20f
-static void predator_siphon(const Cave* victim) {
-    if (!g_predator.loaded || !g_predator.model) return;
-    CoOccurrence* H = &g_predator.model->cooccur;
-    const CoOccurrence* V = &victim->model->cooccur;
-    int B = victim->vocab->base_size;
-    if (B > COOCCUR_SIZE) B = COOCCUR_SIZE;
-    for (int i = 0; i < B; i++) {
-        for (int j = 0; j < B; j++) {
-            float v = SIPHON_FRACTION * V->matrix[i][j];
-            float h = H->matrix[i][j] + v;
-            if (h > 1.0f) h = 1.0f;
-            H->matrix[i][j] = h;
-        }
-    }
-    H->total_interactions += V->total_interactions / 5;
-}
-
-/* Storm engine — invoked every orchestrator tick. Stochastic strike.
- * During storm: dissonance + excitement spike on ALL caves, multi-victim
- * forced predator-affair on tick 0, cooccur siphon from each victim into
- * H's substrate, permanent scar (coherence floor bump) on victims. Storm
- * decays to nothing after duration; scars persist. */
-#define PREDATOR_DISSONANCE_SPIKE 0.7f
-#define PREDATOR_EXCITEMENT_SPIKE 0.4f
-#define PREDATOR_SCAR_FLOOR_BUMP  0.05f
-static void try_predator_storm(const char* preset_name) {
-    if (!g_predator.loaded) return;
-
-    if (g_predator_storm_ticks_left > 0) {
-        g_predator_storm_ticks_left--;
-        if (g_predator_storm_ticks_left == 0) {
-            printf("\n  *** PREDATOR STORM ENDS — physics returning to baseline ***\n\n");
-        }
-        return;
-    }
-
-    float roll = (float)rand() / (float)RAND_MAX;
-    if (roll > g_predator_strike_prob) return;
-    if (g_colony_n < 1) return;
-
-    g_predator_total_strikes++;
-
-    /* Escalating victim count: starts at 2, +1 every 3 strikes, capped at 4. */
-    int n_victims = 2 + (g_predator_total_strikes / 3);
-    if (n_victims > 4) n_victims = 4;
-    if (n_victims > g_colony_n) n_victims = g_colony_n;
-
-    /* Pick top-K victims by current excitement (more massive = bigger draw). */
-    int picked[16] = {0};
-    int npicked = 0;
-    for (int k = 0; k < n_victims && npicked < g_colony_n; k++) {
-        int best = -1;
-        float best_score = -1.0f;
-        for (int ci = 0; ci < g_colony_n; ci++) {
-            int already = 0;
-            for (int p = 0; p < npicked; p++)
-                if (picked[p] == ci) { already = 1; break; }
-            if (already) continue;
-            float s = g_colony[ci]->field.excitement +
-                      0.5f * g_colony[ci]->field.dissonance;
-            if (s > best_score) { best_score = s; best = ci; }
-        }
-        if (best < 0) break;
-        picked[npicked++] = best;
-    }
-
-    printf("\n  *** PREDATOR STORM #%d — H descends, %d victims, all caves shudder ***\n",
-           g_predator_total_strikes, npicked);
-
-    /* Field shock: dissonance + excitement bumps on all caves. */
-    for (int ci = 0; ci < g_colony_n; ci++) {
-        Cave* c = g_colony[ci];
-        c->field.dissonance += PREDATOR_DISSONANCE_SPIKE;
-        if (c->field.dissonance > 1.0f) c->field.dissonance = 1.0f;
-        c->field.excitement += PREDATOR_EXCITEMENT_SPIKE;
-        if (c->field.excitement > EXCITEMENT_CAP) c->field.excitement = EXCITEMENT_CAP;
-    }
-
-    /* For each victim: siphon cooccur, scar, impregnate. */
-    for (int p = 0; p < npicked; p++) {
-        int vi = picked[p];
-        Cave* v = g_colony[vi];
-
-        predator_siphon(v);
-
-        float ceil = v->field.baseline_floor + MATURITY_CAP;
-        float new_floor = v->field.coherence_floor + PREDATOR_SCAR_FLOOR_BUMP;
-        if (new_floor > ceil) new_floor = ceil;
-        v->field.coherence_floor = new_floor;
-
-        if (g_colony_n < COLONY_MAX) {
-            Cave* bastard = colony_affair_with_predator(vi, preset_name);
-            if (bastard) {
-                printf("  *** PREDATOR AFFAIR: H × %s → %s (forced, scarred, siphoned) ***\n",
-                       v->field.name, bastard->field.name);
-            }
-        }
-    }
-
-    g_predator_storm_ticks_left = g_predator_storm_duration;
-    g_mitosis_cooldown = MITOSIS_COOLDOWN_TICKS;
-}
 
 static void colony_try_mitosis_trinity(const char* preset_name) {
     if (g_mitosis_cooldown > 0) { g_mitosis_cooldown--; return; }
