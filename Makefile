@@ -64,11 +64,11 @@ cavellman-cpu: cavellman.c ariannamethod/notorch.c ariannamethod/notorch.h
 train: train_cavellman train_diffusion
 
 train_cavellman: ariannamethod/train_cavellman.c ariannamethod/notorch.c ariannamethod/notorch.h
-	$(CC) $(CFLAGS) $(BLAS_FLAGS) -Iariannamethod -o train_cavellman ariannamethod/train_cavellman.c ariannamethod/notorch.c -lm
+	$(CC) $(CFLAGS) -Iariannamethod -o train_cavellman ariannamethod/train_cavellman.c ariannamethod/notorch.c -lm $(BLAS_FLAGS)
 	@echo "Compiled: train_cavellman ($(BLAS_NAME))"
 
 train_diffusion: ariannamethod/train_diffusion.c ariannamethod/notorch.c ariannamethod/notorch.h
-	$(CC) $(CFLAGS) $(BLAS_FLAGS) -Iariannamethod -o train_diffusion ariannamethod/train_diffusion.c ariannamethod/notorch.c -lm
+	$(CC) $(CFLAGS) -Iariannamethod -o train_diffusion ariannamethod/train_diffusion.c ariannamethod/notorch.c -lm $(BLAS_FLAGS)
 	@echo "Compiled: train_diffusion ($(BLAS_NAME))"
 
 # ── Weights: train fresh if missing ─────────────────────────────────────
