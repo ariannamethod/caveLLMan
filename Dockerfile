@@ -15,7 +15,14 @@ COPY . .
 # between A/B trained at E=96 small and startCommand --preset medium
 # making forwards read past wq/w_fc1 buffers) is fixed via shape detection
 # in model_load. With correct dims, BLAS is happy too.
-RUN make cavellman
+#
+# Build both ring engine AND train_cavellman — the ring `fork+execlp`s
+# `./train_cavellman` for microtraining on own speech + DNA samples
+# (cavellman.c:2211, 42/cavellman_42.c:1693). Without this binary the
+# child always exits 127 ("command not found") and Hebbian becomes the
+# only adaptation path. Storm fork has the most cave threads → most
+# observed failures (17/200 lines on v4-storm vs 0-4 on others).
+RUN make cavellman train_cavellman
 
 # Persistent state lives on the mounted volume at /data; spore goes under it.
 ENV CAVELLMAN_SPORE_DIR=/data/spore
