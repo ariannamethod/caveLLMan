@@ -14,7 +14,7 @@
 #   make help                  Show this help
 
 CC = cc
-CFLAGS = -O3 -Wall -Wextra -std=c11 -I.
+CFLAGS = -O2 -Wall -Wextra -std=c11 -I.
 
 # Detect platform for BLAS
 UNAME := $(shell uname)
@@ -28,12 +28,14 @@ ifeq ($(UNAME), Linux)
   BLAS_FLAGS = -DUSE_BLAS -lopenblas
   BLAS_NAME = OpenBLAS
   # -rdynamic + -g make backtrace_symbols print function names from the crash
-  # trap installed in main(). -O3 + -march=native -mtune=native are the
-  # second half of the Railway CPU recipe (first half — single-thread
-  # OpenBLAS — already in Dockerfile env). On Railway Linux runners
-  # with small preset dim (96/128) the inner-loop matmul outruns
-  # OpenBLAS once the compiler vectorises it; recipe gave ~7× end-to-end
-  # speedup on Henry session 2026-04-29 (310 → 142 min on 12K steps).
+  # trap installed in main(). -march=native -mtune=native are second half of
+  # Railway CPU recipe (first half — single-thread OpenBLAS — already in
+  # Dockerfile env). Henry session 2026-04-29: ~7× end-to-end speedup
+  # (310 → 142 min on 12K steps). 2026-05-04: -O3 dropped to -O2 for async
+  # builds (trinity / storm) — -O3 + concurrent BLAS access exposed UB
+  # (SGEMV illegal value + SIGNAL 11 within ~9h on Linux x86_64). Sync
+  # ring survived -O3, async did not. -O2 keeps native SIMD + BLAS gain
+  # without aggressive load/store reorder that races with Hebbian writer.
   # _GNU_SOURCE: sigaction, SA_RESETHAND, strdup, usleep, fileno on glibc.
   CFLAGS += -g -rdynamic -D_GNU_SOURCE -march=native -mtune=native
 endif
