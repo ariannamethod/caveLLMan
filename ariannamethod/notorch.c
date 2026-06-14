@@ -1310,7 +1310,8 @@ void nt_tape_adam_step(float lr) {
     int param_idx = 0;
     for (int i = 0; i < g_tape.count && param_idx < g_tape.n_params; i++) {
         nt_tape_entry* e = &g_tape.entries[i];
-        if (!e->is_param || !e->grad) continue;
+        if (!e->is_param) continue;
+        if (!e->grad) { param_idx++; continue; }   // registered param w/o grad this step: keep slot alignment, skip update
         nt_adam_state* as = &g_tape.adam[param_idx];
         if (!as->m || !as->v) { param_idx++; continue; }
         as->t++;
@@ -1333,7 +1334,8 @@ void nt_tape_adamw_step(float lr, float weight_decay, float beta1, float beta2) 
     int param_idx = 0;
     for (int i = 0; i < g_tape.count && param_idx < g_tape.n_params; i++) {
         nt_tape_entry* e = &g_tape.entries[i];
-        if (!e->is_param || !e->grad) continue;
+        if (!e->is_param) continue;
+        if (!e->grad) { param_idx++; continue; }   // registered param w/o grad this step: keep slot alignment, skip update
         nt_adam_state* as = &g_tape.adam[param_idx];
         if (!as->m || !as->v) { param_idx++; continue; }
         as->t++;
@@ -1460,7 +1462,8 @@ void nt_tape_chuck_step(float lr, float loss_val) {
     int param_idx = 0;
     for (int i = 0; i < g_tape.count && param_idx < g_tape.n_params; i++) {
         nt_tape_entry* e = &g_tape.entries[i];
-        if (!e->is_param || !e->grad) continue;
+        if (!e->is_param) continue;
+        if (!e->grad) { param_idx++; continue; }   // registered param w/o grad this step: keep slot alignment, skip update
         nt_adam_state* as = &g_tape.adam[param_idx];
         nt_chuck_param_state* cp = &g_tape.chuck_params[param_idx];
         if (cp->dampen == 0.0f) cp->dampen = 1.0f;
@@ -1553,7 +1556,8 @@ void nt_tape_accum_grads(void) {
     int param_idx = 0;
     for (int i = 0; i < g_tape.count && param_idx < g_tape.n_params; i++) {
         nt_tape_entry* e = &g_tape.entries[i];
-        if (!e->is_param || !e->grad) continue;
+        if (!e->is_param) continue;
+        if (!e->grad) { param_idx++; continue; }   // registered param w/o grad this step: keep slot alignment, skip update
         nt_adam_state* as = &g_tape.adam[param_idx];
         int n = e->output->len;
         if (!as->acc_grad) {
@@ -2656,6 +2660,7 @@ nt_tensor** nt_load(const char* path, int* n_params) {
     for (int i = 0; i < n; i++) {
         int32_t ndim;
         fread(&ndim, 4, 1, f);
+        if (ndim < 0 || ndim > NT_MAX_DIMS) { fclose(f); *n_params = i; return params; }
         int shape[NT_MAX_DIMS];
         for (int d = 0; d < ndim; d++) {
             int32_t s;
