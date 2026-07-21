@@ -822,6 +822,7 @@ static void learner_scan_dir(AsyncLearner* al, const char* dir_path,
                              const char* tag, int expire) {
     DIR* dir = opendir(dir_path);
     if (!dir) return;
+    int dfd = dirfd(dir);
     time_t now = time(NULL);
 
     struct dirent* ent;
@@ -830,14 +831,17 @@ static void learner_scan_dir(AsyncLearner* al, const char* dir_path,
         int nlen = (int)strlen(ent->d_name);
         if (ent->d_name[0] == '.') continue;
 
-        char path[1024];
-        snprintf(path, sizeof(path), "%s/%s", dir_path, ent->d_name);
+        /* Operate through the directory fd (dfd) with *at() calls so the file
+         * that was checked is the file that gets used — no path re-resolution
+         * TOCTOU window between the stat/check and the open/rename/unlink. */
+        char done_name[512];
+        snprintf(done_name, sizeof(done_name), "%s.learned", ent->d_name);
 
         /* TTL expiration: drop anything older than DNA_MAX_AGE in this dir */
         if (expire) {
             struct stat st;
-            if (stat(path, &st) == 0 && now - st.st_mtime > DNA_MAX_AGE) {
-                remove(path);
+            if (fstatat(dfd, ent->d_name, &st, 0) == 0 && now - st.st_mtime > DNA_MAX_AGE) {
+                unlinkat(dfd, ent->d_name, 0);
                 continue;
             }
         }
@@ -846,13 +850,13 @@ static void learner_scan_dir(AsyncLearner* al, const char* dir_path,
         if (nlen < 5 || strcmp(ent->d_name + nlen - 4, ".txt") != 0) continue;
         if (nlen >= 12 && strcmp(ent->d_name + nlen - 12, "_holding.txt") == 0) continue;
 
-        char done_path[1024];
-        snprintf(done_path, sizeof(done_path), "%s.learned", path);
         struct stat st;
-        if (stat(done_path, &st) == 0) continue;
+        if (fstatat(dfd, done_name, &st, 0) == 0) continue;
 
-        FILE* f = fopen(path, "r");
-        if (!f) continue;
+        int fd = openat(dfd, ent->d_name, O_RDONLY);
+        if (fd < 0) continue;
+        FILE* f = fdopen(fd, "r");
+        if (!f) { close(fd); continue; }
         fseek(f, 0, SEEK_END);
         long fsize = ftell(f);
         fseek(f, 0, SEEK_SET);
@@ -867,7 +871,7 @@ static void learner_scan_dir(AsyncLearner* al, const char* dir_path,
         learn_from_text(al, content, (int)fsize);
         free(content);
 
-        rename(path, done_path);
+        renameat(dfd, ent->d_name, dfd, done_name);
         al->files_consumed++;
         printf("  [%s] %s → %d lines (total files: %d)\n",
                tag, ent->d_name, al->lines_learned, al->files_consumed);
